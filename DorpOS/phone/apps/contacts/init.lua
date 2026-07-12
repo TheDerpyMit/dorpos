@@ -54,19 +54,16 @@ end
 
 local function acceptRequest(username)
     local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/accept", { username = username })
-    if ok then fetchFriends() end
     return ok
 end
 
 local function declineRequest(username)
     local ok = net.post(C.HOST_ACCOUNTS, "/friends/decline", { username = username })
-    if ok then fetchFriends() end
     return ok
 end
 
 local function removeFriend(username)
     net.post(C.HOST_ACCOUNTS, "/friends/remove", { username = username })
-    fetchFriends()
 end
 
 -- Open a chat with a friend by launching Messages with a target
@@ -409,6 +406,13 @@ local friendHits = drawFriends()
 while true do
     local ev = { os.pullEvent() }
     local name = ev[1]
+
+    if name == "dorpos_friend_update" then
+        fetchFriends()
+        if view == "friends" then friendHits = drawFriends()
+        elseif view == "requests" then drawRequests()
+        end
+    end
 
     -- Tab switching (row 2 = tab bar)
     if name == "mouse_click" then

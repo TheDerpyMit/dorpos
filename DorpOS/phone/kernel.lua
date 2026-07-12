@@ -222,6 +222,23 @@ local function processSystemEvents()
     end
 end
 
+-- ─────────────────────────────────────────────────────────────
+-- Real-time push listener
+-- ─────────────────────────────────────────────────────────────
+
+local function realtimePushListener()
+    while true do
+        local senderId, msg = rednet.receive(C.PROTOCOL_NAME)
+        if type(msg) == "table" and msg.type then
+            if msg.type == "dorpos.message" then
+                os.queueEvent("dorpos_message_received", msg)
+            elseif msg.type == "dorpos.friend_update" then
+                os.queueEvent("dorpos_friend_update", msg)
+            end
+        end
+    end
+end
+
 parallel.waitForAny(
     function()
         while _running do
@@ -238,7 +255,8 @@ parallel.waitForAny(
         end
     end,
     processSystemEvents,
-    discoveryResponder  -- replies to nearby phones scanning for friends
+    discoveryResponder, -- replies to nearby phones scanning for friends
+    realtimePushListener
 )
 
 log.info("kernel", "Kernel shutting down")

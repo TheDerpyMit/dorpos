@@ -141,6 +141,7 @@ server.route("/messages/send", function(clientId, req)
     save("convos", convos)
 
     -- Queue for offline recipients (keyed by username)
+    local accounts = loadAccounts()
     for _, participant in ipairs(convos[convoId].participants) do
         if participant ~= fromName then
             offline[participant] = offline[participant] or {}
@@ -149,6 +150,16 @@ server.route("/messages/send", function(clientId, req)
                 convoId = convoId,
                 msg     = msg,
             })
+            
+            -- Real-time push
+            local targetUser = accounts[participant]
+            if targetUser and targetUser.deviceId then
+                rednet.send(targetUser.deviceId, {
+                    type    = "dorpos.message",
+                    convoId = convoId,
+                    msg     = msg,
+                }, C.PROTOCOL_NAME)
+            end
         end
     end
     save("offline", offline)

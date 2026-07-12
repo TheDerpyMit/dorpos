@@ -67,13 +67,16 @@ local function sendMessage(convoId, text)
         text    = text,
         from    = myUsername,
     })
+    if ok and resp.body and resp.body.messageId then
+        return true, resp.body.messageId
+    end
     if not ok then
         -- Queue for offline delivery
         net.queue(C.HOST_MESSAGES, "/messages/send", {
             convoId = convoId, text = text, from = myUsername,
         })
     end
-    return ok
+    return ok, nil
 end
 
 -- Check if a username exists on the accounts server.
@@ -366,6 +369,37 @@ local _hits = view == "list" and drawList() or drawChat()
 while true do
     local ev = { os.pullEvent() }
     local name = ev[1]
+    if name == "dorpos_message_received" then
+        local p = ev[2]
+        if p.convoId then
+            local foundConvo = false
+            for _, c in ipairs(convos) do
+                if c.id == p.convoId then
+                    foundConvo = true
+                    if view ~= "chat" or (activeConvo and activeConvo.id ~= p.convoId) then
+                        c.unread = (c.unread or 0) + 1
+                    end
+                    c.lastMsg = p.msg.text
+                    c.lastTs  = p.msg.timestamp
+                    break
+                end
+            end
+            if not foundConvo then fetchConvos() end
+
+            if view == "chat" and activeConvo and activeConvo.id == p.convoId then
+                local dup = false
+                for _, m in ipairs(chatMessages) do
+                    if m.id == p.msg.id then dup = true; break end
+                end
+                if not dup then
+                    table.insert(chatMessages, p.msg)
+                    drawChat()
+                end
+            elseif view == "list" then
+                _hits = drawList()
+            end
+        end
+    end
 
     if view == "list" then
         if name == "mouse_click" then
@@ -410,8 +444,9 @@ while true do
                 local kbY = H - 7
                 if my == kbY - 1 and mx >= W - 4 then
                     if #composeText > 0 then
-                        sendMessage(activeConvo.id, composeText)
+                        local ok, mId = sendMessage(activeConvo.id, composeText)
                         table.insert(chatMessages, {
+                            id   = mId or ("local_" .. os.epoch("utc")),
                             from = myUsername, text = composeText,
                             timestamp = os.epoch("utc"),
                         })
@@ -427,8 +462,8 @@ while true do
             if key == keys.backspace and #composeText > 0 then
                 composeText = composeText:sub(1, -2); drawChat()
             elseif key == keys.enter and #composeText > 0 then
-                sendMessage(activeConvo.id, composeText)
-                table.insert(chatMessages, { from = myUsername, text = composeText, timestamp = os.epoch("utc") })
+                local ok, mId = sendMessage(activeConvo.id, composeText)
+                table.insert(chatMessages, { id = mId or ("local_" .. os.epoch("utc")), from = myUsername, text = composeText, timestamp = os.epoch("utc") })
                 composeText = ""; drawChat()
             end
         elseif name == "mouse_scroll" then

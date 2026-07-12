@@ -112,6 +112,11 @@ server.route("/account/login", function(clientId, req)
         return server.fail(clientId, req, 401, "Invalid credentials")
     end
 
+    if deviceId and user.deviceId ~= deviceId then
+        user.deviceId = deviceId
+        save("users", users)
+    end
+
     local token = tok.create(server._secret, tostring(deviceId or user.userId),
                               user.userId, os.epoch("utc"))
     server.ok(clientId, req, { userId = user.userId, token = token, username = user.username })
@@ -247,6 +252,12 @@ server.route("/friends/request", function(clientId, req)
             target.friends = target.friends or {}
             table.insert(target.friends, myUname)
             save("users", users)
+            if target.deviceId then
+                rednet.send(target.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+            end
+            if me.deviceId then
+                rednet.send(me.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+            end
             return server.ok(clientId, req, { status = "accepted", mutual = true })
         end
     end
@@ -254,6 +265,9 @@ server.route("/friends/request", function(clientId, req)
     -- Add to target's pending requests
     table.insert(target.friendRequests, myUname)
     save("users", users)
+    if target.deviceId then
+        rednet.send(target.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+    end
     print("[accounts] Friend request: " .. myUname .. " → " .. targetName)
     server.ok(clientId, req, { status = "requested" })
 end)
@@ -293,6 +307,12 @@ server.route("/friends/accept", function(clientId, req)
     end
 
     save("users", users)
+    if requester and requester.deviceId then
+        rednet.send(requester.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+    end
+    if me.deviceId then
+        rednet.send(me.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+    end
     print("[accounts] Friend accepted: " .. myUname .. " ↔ " .. fromName)
     server.ok(clientId, req, { status = "accepted" })
 end)
@@ -314,6 +334,13 @@ server.route("/friends/decline", function(clientId, req)
         if r == fromName then
             table.remove(me.friendRequests, i)
             save("users", users)
+            if me.deviceId then
+                rednet.send(me.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+            end
+            local requester = users[fromName]
+            if requester and requester.deviceId then
+                rednet.send(requester.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+            end
             return server.ok(clientId, req, { status = "declined" })
         end
     end
@@ -348,6 +375,12 @@ server.route("/friends/remove", function(clientId, req)
     end
 
     save("users", users)
+    if me.deviceId then
+        rednet.send(me.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+    end
+    if target and target.deviceId then
+        rednet.send(target.deviceId, { type = "dorpos.friend_update" }, C.PROTOCOL_NAME)
+    end
     server.ok(clientId, req, { status = "removed" })
 end)
 
