@@ -58,7 +58,7 @@ if choice == 1 then
     -- Phone installation
     cls()
     print("Installing DorpOS Phone Bootstrap...")
-    local url  = "https://raw.githubusercontent.com/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/" .. BRANCH .. "/DorpOS/phone/startup.lua"
+    local url  = "https://raw.githubusercontent.com/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/" .. BRANCH .. "/DorpOS/phone/startup.lua?t=" .. os.epoch("utc")
     local path = "/startup.lua"
     
     print("Downloading: " .. path)
@@ -79,7 +79,7 @@ elseif choice == 2 then
     -- Server installation
     cls()
     print("Fetching server repository tree from GitHub...")
-    local apiURL = "https://api.github.com/repos/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/git/trees/" .. BRANCH .. "?recursive=1"
+    local apiURL = "https://api.github.com/repos/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/git/trees/" .. BRANCH .. "?recursive=1&t=" .. os.epoch("utc")
     
     local resp = http.get(apiURL, { ["User-Agent"] = "ComputerCraft-Installer" })
     if not resp then
@@ -107,7 +107,7 @@ elseif choice == 2 then
         if entry.type == "blob" and entry.path:sub(1, 7) == "DorpOS/" then
             -- Strip the "DorpOS/" prefix to install directly to root directories
             local targetPath = "/" .. entry.path:sub(8)
-            local downloadURL = "https://raw.githubusercontent.com/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/" .. BRANCH .. "/" .. entry.path
+            local downloadURL = "https://raw.githubusercontent.com/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/" .. BRANCH .. "/" .. entry.path .. "?t=" .. os.epoch("utc")
             
             print("Downloading: " .. targetPath)
             if downloadFile(downloadURL, targetPath) then
