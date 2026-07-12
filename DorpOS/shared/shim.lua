@@ -50,6 +50,11 @@ if not package then
         error("Module '" .. modname .. "' not found.", 2)
     end
 else
-    -- If package exists, prepend our absolute lookup folders to the search path
-    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
+    -- If package exists, check if it's already modified to avoid infinite prepends
+    if not package.path or not package.path:find("/shared/?.lua", 1, true) then
+        -- If package.path is nil, we must explicitly include the default ROM search paths
+        local defaultPaths = "?.lua;?/init.lua;/rom/modules/main/?.lua;/rom/modules/main/?/init.lua"
+        local existing = package.path or defaultPaths
+        package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. existing
+    end
 end
