@@ -15,7 +15,11 @@
     this loop by registering a handler coroutine.
 ]]
 
-pcall(dofile, "/shared/shim.lua")
+if package then
+    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
+else
+    pcall(dofile, "/shared/shim.lua")
+end
 
 local C       = require("shared.constants")
 local log     = require("system.utils.logger")

@@ -19,7 +19,11 @@
     request and cached. Re-generate by deleting /data/manifest.dat.
 ]]
 
-pcall(dofile, "/shared/shim.lua")
+if package then
+    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
+else
+    pcall(dofile, "/shared/shim.lua")
+end
 
 local C     = require("shared.constants")
 local proto = require("shared.protocol")

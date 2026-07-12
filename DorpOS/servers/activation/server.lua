@@ -18,7 +18,11 @@
     server computer. The SERVER_SETUP.md doc explains how to do this.
 ]]
 
-pcall(dofile, "/shared/shim.lua")
+if package then
+    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
+else
+    pcall(dofile, "/shared/shim.lua")
+end
 
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")

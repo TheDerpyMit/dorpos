@@ -1,5 +1,9 @@
 --[[  DorpOS :: servers/notifications/server.lua ]]
-pcall(dofile, "/shared/shim.lua")
+if package then
+    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
+else
+    pcall(dofile, "/shared/shim.lua")
+end
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")
 local server = Base.new(C.HOST_NOTIFICATIONS, "Notifications")
