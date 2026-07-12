@@ -80,6 +80,14 @@ end
 -- Helpers
 -- ─────────────────────────────────────────────────────────────
 
+local function enrichListing(lst)
+    local enriched = {}
+    for k, v in pairs(lst) do enriched[k] = v end
+    enriched.sellerId = lst.seller -- keep original
+    enriched.seller   = userIdToUsername(lst.seller)
+    return enriched
+end
+
 local function filterListings(query, sort, status)
     query  = query  or ""
     sort   = sort   or "newest"
@@ -92,7 +100,7 @@ local function filterListings(query, sort, status)
             if q == "" or
                (lst.title or ""):lower():find(q, 1, true) or
                (lst.description or ""):lower():find(q, 1, true) then
-                table.insert(out, lst)
+                table.insert(out, enrichListing(lst))
             end
         end
     end
@@ -140,7 +148,7 @@ server.route("/market/listing", function(clientId, req)
     end
     listings[id].views = (listings[id].views or 0) + 1
     save("listings", listings)
-    server.ok(clientId, req, { listing = listings[id] })
+    server.ok(clientId, req, { listing = enrichListing(listings[id]) })
 end)
 
 -- Post a new listing
@@ -168,7 +176,7 @@ server.route("/market/post", function(clientId, req)
         title       = title:sub(1, C.MARKET_TITLE_MAX_LEN),
         description = (description or ""):sub(1, C.MARKET_DESC_MAX_LEN),
         wantedFor   = wantedFor:sub(1, C.MARKET_PRICE_MAX_LEN),
-        seller      = userIdToUsername(claims.userId),
+        seller      = claims.userId,
         status      = C.MARKET_STATUS_ACTIVE,
         createdAt   = os.epoch("utc"),
         views       = 0,
@@ -176,7 +184,7 @@ server.route("/market/post", function(clientId, req)
     save("listings", listings)
     print("[market] New listing " .. id .. " from " .. claims.userId)
 
-    server.created(clientId, req, { listingId = id, listing = listings[id] })
+    server.created(clientId, req, { listingId = id, listing = enrichListing(listings[id]) })
 end)
 
 -- Remove a listing (seller only)
@@ -188,7 +196,8 @@ server.route("/market/remove", function(clientId, req)
     if not id or not listings[id] then
         return server.fail(clientId, req, 404, "Listing not found")
     end
-    if listings[id].seller ~= claims.userId then
+    local uname = userIdToUsername(claims.userId)
+    if listings[id].seller ~= claims.userId and listings[id].seller ~= uname then
         return server.fail(clientId, req, 403, "Not your listing")
     end
 
@@ -206,7 +215,8 @@ server.route("/market/sold", function(clientId, req)
     if not id or not listings[id] then
         return server.fail(clientId, req, 404, "Listing not found")
     end
-    if listings[id].seller ~= claims.userId then
+    local uname = userIdToUsername(claims.userId)
+    if listings[id].seller ~= claims.userId and listings[id].seller ~= uname then
         return server.fail(clientId, req, 403, "Not your listing")
     end
 
@@ -224,7 +234,7 @@ server.route("/market/mine", function(clientId, req)
     local userId = claims.userId
     local mine   = {}
     for _, lst in pairs(listings) do
-        if lst.seller == userId then table.insert(mine, lst) end
+        if lst.seller == userId then table.insert(mine, enrichListing(lst)) end
     end
     table.sort(mine, function(a, b) return a.createdAt > b.createdAt end)
     server.ok(clientId, req, { listings = mine, count = #mine })

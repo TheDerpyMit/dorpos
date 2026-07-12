@@ -269,23 +269,25 @@ local function sectionUpdate()
     ui.write(2, 7, "data, wipe the phone,", t.textMuted, t.bg)
     ui.write(2, 8, "and re-run setup.", t.textMuted, t.bg)
 
-    ui.button({ x = 2, y = 11, width = 14, label = "Update & Wipe", style = "danger" })
+    ui.button({ x = 2, y = 11, width = 11, label = "Update", style = "primary" })
+    ui.button({ x = 14, y = 11, width = 11, label = "Wipe", style = "danger" })
     ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
         if my == H and mx <= 3 then return end
-        if my == 11 and mx >= 2 and mx <= 15 then
-            ui.dialog({
+        
+        -- Update Button
+        if my == 11 and mx >= 2 and mx <= 12 then
+            local res = ui.dialog({
                 title = "Update System",
-                message = "Are you sure you want to back up and wipe?",
+                message = "Back up to cloud and restart?",
                 buttons = {
                     { label = "Cancel", value = false },
-                    { label = "Yes, Wipe", value = true }
+                    { label = "Update", value = true }
                 }
             })
-            local _, ev = os.pullEvent("dorpos_dialog_result")
-            if ev.value == true then
+            if res == true then
                 ui.clear()
                 ui.write(2, 5, "Backing up data...", t.accent, t.bg)
                 os.sleep(0.5)
@@ -314,19 +316,18 @@ local function sectionUpdate()
                 if not ok then
                     ui.toast({ text = "Backup failed!", type = "error", y = H - 1 })
                     os.sleep(2)
+                    sectionUpdate() -- redraw
                     return
                 end
 
                 ui.clear()
                 ui.write(2, 5, "Backup complete.", t.success, t.bg)
-                ui.write(2, 7, "Wiping phone...", t.danger, t.bg)
+                ui.write(2, 7, "Restarting...", t.accent, t.bg)
                 os.sleep(1)
 
                 -- 3. Wipe phone
                 if fs.exists("/boot.lua") then fs.delete("/boot.lua") end
                 if fs.exists("/data") then
-                    -- Delete phone-specific config files, but preserve server data
-                    -- in case the phone and server are running on the same computer
                     local phoneFiles = {
                         "user_config.dat", "session.dat", "setup_wizard.dat",
                         "notifications.dat", "pin.dat", "messages.dat",
@@ -343,6 +344,48 @@ local function sectionUpdate()
 
                 -- 4. Reboot into provisioning
                 os.reboot()
+            else
+                sectionUpdate() -- redraw
+                return
+            end
+        end
+
+        -- Wipe Button
+        if my == 11 and mx >= 14 and mx <= 24 then
+            local res = ui.dialog({
+                title = "Factory Reset",
+                message = "Erase all data on this phone?",
+                buttons = {
+                    { label = "Cancel", value = false, style = "ghost" },
+                    { label = "Wipe", value = true, style = "danger" }
+                }
+            })
+            if res == true then
+                ui.clear()
+                ui.write(2, 5, "Wiping phone...", t.danger, t.bg)
+                os.sleep(1)
+
+                -- Wipe phone
+                if fs.exists("/boot.lua") then fs.delete("/boot.lua") end
+                if fs.exists("/data") then
+                    local phoneFiles = {
+                        "user_config.dat", "session.dat", "setup_wizard.dat",
+                        "notifications.dat", "pin.dat", "messages.dat",
+                        "contacts.dat", "marketplace.dat", "theme.json", "user.json"
+                    }
+                    for _, f in ipairs(phoneFiles) do
+                        if fs.exists("/data/" .. f) then fs.delete("/data/" .. f) end
+                    end
+                    local phoneDirs = { "config", "cache", "user", "logs", "downloads" }
+                    for _, d in ipairs(phoneDirs) do
+                        if fs.exists("/data/" .. d) then fs.delete("/data/" .. d) end
+                    end
+                end
+
+                os.reboot()
+            else
+                sectionUpdate() -- redraw
+                return
             end
         end
     end

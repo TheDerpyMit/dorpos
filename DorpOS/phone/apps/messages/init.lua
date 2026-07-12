@@ -342,7 +342,26 @@ end
 fetchConvos()
 fetchFriends()
 
-local _hits = drawList()
+-- Handle openWith argument from other apps
+if ARGS and ARGS.openWith then
+    local target = ARGS.openWith:lower()
+    local id = startConvo(target)
+    if id then
+        local found = false
+        for _, c in ipairs(convos) do if c.id == id then found = true end end
+        if not found then
+            table.insert(convos, { id = id, name = target, messages = {}, unread = 0 })
+            msgCache.set("convos", convos); msgCache.save()
+        end
+        for _, c in ipairs(convos) do
+            if c.id == id then activeConvo = c; break end
+        end
+        chatMessages = fetchMessages(id) or {}
+        view = "chat"
+    end
+end
+
+local _hits = view == "list" and drawList() or drawChat()
 
 while true do
     local ev = { os.pullEvent() }

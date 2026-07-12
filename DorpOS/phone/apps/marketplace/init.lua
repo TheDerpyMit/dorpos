@@ -33,6 +33,7 @@ local newListing = { title = "", description = "", wantedFor = "" }
 local editField  = "title"
 local shifted    = false
 local kbHits     = nil
+local isPosting  = false
 
 -- ─────────────────────────────────────────────────────────────
 -- Server calls
@@ -221,7 +222,11 @@ local function drawPost()
     })
 
     -- Post button
-    ui.button({ x = W - 7, y = H - 8, width = 7, label = "Post!" })
+    if isPosting then
+        ui.button({ x = W - 9, y = H - 8, width = 9, label = "Posting...", style = "ghost" })
+    else
+        ui.button({ x = W - 7, y = H - 8, width = 7, label = "Post!" })
+    end
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -329,6 +334,7 @@ while true do
                 drawPost()
             elseif my == H - 8 and mx >= W - 7 then
                 -- Submit
+                if isPosting then return end
                 if #newListing.title > 0 and #newListing.wantedFor > 0 then
                     -- Save a copy for submission
                     local toPost = {
@@ -336,21 +342,22 @@ while true do
                         description = newListing.description,
                         wantedFor = newListing.wantedFor
                     }
-                    -- Immediately clear the form to prevent double-submit
-                    newListing = { title = "", description = "", wantedFor = "" }
+                    isPosting = true
+                    drawPost()
                     
                     ui.toast({ text = "Posting...", type = "info", y = H })
                     os.sleep(0.5)
 
                     local ok, resp = postListing(toPost)
+                    isPosting = false
                     if ok then
+                        -- Immediately clear the form
+                        newListing = { title = "", description = "", wantedFor = "" }
                         view = "browse"
                         fetchListings(); _hits = drawBrowse()
                     else
                         ui.toast({ text = "Post failed. Try again.", type = "error", y = H })
                         os.sleep(1)
-                        -- Restore form if failed
-                        newListing = toPost
                         drawPost()
                     end
                 else

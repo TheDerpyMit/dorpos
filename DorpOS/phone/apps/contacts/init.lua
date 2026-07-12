@@ -73,7 +73,7 @@ end
 local function openChat(username)
     -- Start convo on messages server, then launch messages app
     net.post(C.HOST_MESSAGES, "/messages/start", { with = username })
-    os.queueEvent("dorpos_launch_app", "messages", { openWith = username })
+    os.queueEvent("dorpos_launch_app", C.APP_MESSAGES, { openWith = username })
     return  -- app exits, kernel handles launch
 end
 

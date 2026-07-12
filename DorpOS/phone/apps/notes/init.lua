@@ -32,8 +32,6 @@ local function runEditor(note)
     local title   = note.title or ""
     local body    = note.body  or ""
     local focused = "title"  -- "title" | "body"
-    local shifted = false
-    local kbHits  = nil
     local bodyScroll = 0
     local bodyLines  = {}
     local shouldExit = false
@@ -49,7 +47,7 @@ local function runEditor(note)
 
     rebuildLines()
 
-    local kbY = H - 7  -- keyboard starts here, so content ends at kbY-1
+    local bodyH = H - 5  -- body fills from row 5 down to H-1
 
     local function redraw()
         ui.clear()
@@ -63,8 +61,7 @@ local function runEditor(note)
         ui.textbox({ x = 2, y = 3, width = W - 3, value = title,
                      focused = (focused == "title"), placeholder = "Note title" })
         ui.divider(4)
-        -- Body area (rows 5 to kbY-2)
-        local bodyH = kbY - 5
+        -- Body area (rows 5 to H-1)
         local visLines = {}
         for i = bodyScroll + 1, math.min(bodyScroll + bodyH, #bodyLines) do
             table.insert(visLines, bodyLines[i])
@@ -75,34 +72,6 @@ local function runEditor(note)
             term.setTextColor(t.text)
             term.write(utils.padRight(line, W - 3))
         end
-        -- Keyboard (occupies kbY to H)
-        kbHits = kbComp.draw({
-            y = kbY, shifted = shifted,
-            onChar  = function(c)
-                if focused == "title" then
-                    title = title .. c
-                else
-                    body = body .. c; rebuildLines()
-                end
-            end,
-            onBack = function()
-                if focused == "title" and #title > 0 then
-                    title = title:sub(1, -2)
-                elseif focused == "body" and #body > 0 then
-                    body = body:sub(1, -2); rebuildLines()
-                end
-            end,
-            onEnter = function()
-                if focused == "title" then focused = "body"
-                else body = body .. "\n"; rebuildLines() end
-            end,
-            onShift = function() shifted = not shifted end,
-            onClose = function()
-                -- Cancel / back out of editor without saving
-                shouldExit = true
-                saveResult = nil
-            end,
-        })
     end
 
     redraw()
@@ -128,10 +97,7 @@ local function runEditor(note)
             end
             -- Field focus
             if my == 3 then focused = "title"; redraw()
-            elseif my >= 5 and my <= kbY - 2 then focused = "body"; redraw()
-            elseif kbHits and kbComp.handleClick(kbHits, mx, my) then
-                if shouldExit then return saveResult end
-                rebuildLines(); redraw()
+            elseif my >= 5 and my <= H - 1 then focused = "body"; redraw()
             end
         elseif name == "char" then
             if focused == "title" then title = title .. ev[2]
@@ -145,6 +111,15 @@ local function runEditor(note)
                 redraw()
             elseif key == keys.tab then
                 focused = focused == "title" and "body" or "title"; redraw()
+            elseif key == keys.enter or key == keys.numPadEnter then
+                if focused == "title" then focused = "body"
+                else body = body .. "\n"; rebuildLines() end
+                redraw()
+            end
+        elseif name == "mouse_scroll" then
+            if focused == "body" then
+                bodyScroll = math.max(0, math.min(bodyScroll + ev[2], math.max(0, #bodyLines - bodyH)))
+                redraw()
             end
         end
     end
@@ -197,7 +172,7 @@ local function drawList()
         term.setCursorPos(1, ry)
         term.setBackgroundColor(bg)
         term.setTextColor(fg)
-        term.write(utils.padRight(utils.truncate("  " .. (n.title or "Untitled"), W - 1), W))
+        term.write(utils.padRight(utils.truncate("  " .. ((n.title and n.title ~= "") and n.title or "Untitled"), W - 1), W))
 
         local ni = i
         table.insert(_hits, { y = ry, idx = ni })
@@ -229,7 +204,7 @@ local function run()
                     -- New note
                     local newNote = { title = "", body = "", created = os.epoch("utc"), modified = os.epoch("utc") }
                     local result  = runEditor(newNote)
-                    if result and #result.title > 0 then
+                    if result and (#result.title > 0 or #result.body > 0) then
                         table.insert(notes, result)
                         saveNotes()
                     end
