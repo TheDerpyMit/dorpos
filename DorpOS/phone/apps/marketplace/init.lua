@@ -94,7 +94,9 @@ local function drawBrowse()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" DorpMarket  [+]", W))
+    local title = " DorpMarket"
+    local btn = "[+]"
+    term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     -- Search bar
     term.setCursorPos(1, 2)

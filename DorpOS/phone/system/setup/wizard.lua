@@ -369,10 +369,10 @@ local function stepPermissions()
 
     ui.write(2, 6, "DorpOS will:", t.text, t.bg)
     local perms = {
-        "\4 Store data on this computer",
-        "\4 Connect to DorpOS servers",
-        "\4 Send and receive messages",
-        "\4 Access the marketplace",
+        "\4 Store data locally",
+        "\4 Connect to servers",
+        "\4 Send & receive msgs",
+        "\4 Access marketplace",
     }
     for i, p in ipairs(perms) do
         ui.write(2, 7 + i, p, t.success, t.bg)
@@ -393,7 +393,7 @@ local function stepTutorial()
     local t    = Theme.get()
     local tips = {
         { title = "Home Screen",  body = "Tap an app icon to\nopen it." },
-        { title = "Status Bar",   body = "Shows time, signal\nand battery." },
+        { title = "Status Bar",   body = "Shows time and\nnetwork signal." },
         { title = "Quick Menu",   body = "Tap the top bar for\nquick settings." },
         { title = "Marketplace",  body = "Browse & post listings\nin DorpMarket." },
         { title = "Messages",     body = "Chat with other\nDorpOS users." },

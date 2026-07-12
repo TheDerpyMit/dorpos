@@ -159,7 +159,9 @@ local function drawList()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" Notes   [+]", W))
+    local title = " Notes"
+    local btn = "[+]"
+    term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     -- Search bar
     term.setCursorPos(1, 2)

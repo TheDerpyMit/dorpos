@@ -275,7 +275,9 @@ while true do
                 elseif h.id == "network"    then sectionNetwork()
                 elseif h.id == "notifs"     then sectionNotifs()
                 elseif h.id == "storage"    then sectionStorage()
-                elseif h.id == "about"      then os.queueEvent("dorpos_launch_app", C.APP_ABOUT)
+                elseif h.id == "about"      then
+                    os.queueEvent("dorpos_launch_app", C.APP_ABOUT)
+                    return
                 end
                 _hits = drawMenu()
                 break

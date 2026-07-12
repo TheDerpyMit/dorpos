@@ -91,7 +91,9 @@ local function drawList()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" Messages  [+]", W))
+    local title = " Messages"
+    local btn = "[+]"
+    term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     local listH = H - 2
     local _hits = {}

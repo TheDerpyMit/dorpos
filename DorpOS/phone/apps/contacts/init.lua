@@ -140,7 +140,9 @@ local function drawList()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" Contacts  [+] [sync]", W))
+    local title = " Contacts"
+    local btn = "[sync] [+]"
+    term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     term.setCursorPos(1, 2)
     term.setBackgroundColor(t.bgInput)
@@ -181,7 +183,7 @@ while true do
         local mx, my = ev[3], ev[4]
         if my == H and mx <= 6 then return end
         if my == 1 then
-            if mx >= W - 5 and mx <= W - 2 then
+            if mx >= W - 9 and mx <= W - 4 then
                 -- Sync
                 syncContacts()
                 list = filtered()

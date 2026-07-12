@@ -34,7 +34,7 @@ local STATUS_Y   = 1
 local CONTENT_Y  = 2
 local CONTENT_H  = H - 2
 local DOCK_Y     = H
-local COLS       = 4    -- icon columns
+local COLS       = 3    -- icon columns (3 allows 8 chars per icon, preventing truncation)
 local ROWS       = 4    -- icon rows per page
 local ICON_W     = math.floor(W / COLS)
 local ICON_H     = 3   -- rows per icon (char + label + gap)
@@ -52,10 +52,11 @@ local showQuick  = false
 local searchMode = false
 local searchQuery = ""
 
--- Dock app IDs
+-- Dock app IDs (with a dedicated App Drawer button in the center)
 local DOCK = {
     C.APP_MESSAGES,
     C.APP_MARKETPLACE,
+    "drawer",
     C.APP_SETTINGS,
     C.APP_CALCULATOR,
 }
@@ -100,10 +101,10 @@ local function drawStatusBar()
         term.setTextColor(t.statusBarText)
     end
 
-    -- Signal + battery (right)
+    -- Signal status (right, no battery)
     local online = net.isOnline()
-    local right  = (online and "*" or "x") .. " [###]"
-    term.setCursorPos(W - #right, STATUS_Y)
+    local right  = online and "Online" or "Offline"
+    term.setCursorPos(W - #right - 1, STATUS_Y)
     term.write(right)
 end
 
@@ -159,7 +160,11 @@ local function drawDock(dockApps)
         term.setCursorPos(dx + math.floor(dw / 2), DOCK_Y)
         term.setTextColor(t.dockText)
         term.setBackgroundColor(t.dockBg)
-        term.write(app and (app.icon or "?") or " ")
+        if app == "drawer" then
+            term.write("::")
+        else
+            term.write(app and (app.icon or "?") or " ")
+        end
     end
 end
 
@@ -222,7 +227,11 @@ local function drawHome(apps)
     -- Dock
     local dockInfos = {}
     for _, id in ipairs(DOCK) do
-        table.insert(dockInfos, appMgr.getInfo(id))
+        if id == "drawer" then
+            table.insert(dockInfos, "drawer")
+        else
+            table.insert(dockInfos, appMgr.getInfo(id))
+        end
     end
     drawDock(dockInfos)
 
@@ -235,7 +244,11 @@ local function drawHome(apps)
         table.insert(_hitAreas, {
             x1 = dx1, x2 = dx2, y1 = DOCK_Y, y2 = DOCK_Y,
             action = function()
-                os.queueEvent("dorpos_launch_app", launchId)
+                if launchId == "drawer" then
+                    showDrawer = true
+                else
+                    os.queueEvent("dorpos_launch_app", launchId)
+                end
             end,
         })
     end
@@ -447,8 +460,7 @@ while true do
         end
 
         if not handled then
-            -- Tap empty area = open app drawer
-            showDrawer = true
+            -- Tap empty area does nothing now to prevent accidental popups
         end
 
     elseif name == "mouse_scroll" then

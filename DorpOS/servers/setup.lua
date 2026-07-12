@@ -94,7 +94,13 @@ if choice == 1 or choice == 7 or choice == 9 then
             if fs.exists("/shared") then
                 fs.copy("/shared", "/phone_files/shared")
             end
-            print("Copied files to /phone_files")
+            if fs.exists("/system") then
+                fs.delete("/system")
+            end
+            if fs.exists("/phone/system") then
+                fs.copy("/phone/system", "/system")
+            end
+            print("Copied files to /phone_files and /system")
         end
     else
         print("Note: Please copy your phone OS source files to '/phone_files'")

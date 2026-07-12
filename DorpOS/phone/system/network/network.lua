@@ -67,9 +67,8 @@ end
 --- Check whether at least one known service is reachable.
 ---@return boolean
 function net.isOnline()
-    -- Try to look up the accounts server as a connectivity check
-    local id = proto.lookup(C.HOST_ACCOUNTS)
-    return id ~= nil
+    -- Check if rednet is open (instant, no blocking network lookups)
+    return rednet.isOpen()
 end
 
 --- Send an authenticated POST-style request to a service.
