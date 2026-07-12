@@ -14,8 +14,40 @@ end
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")
 local sha  = require("system.crypto.sha256")
-
 local server = Base.new(C.HOST_MARKETPLACE, "Marketplace")
+
+-- ─────────────────────────────────────────────────────────────
+-- Helper: resolve userId → username by reading accounts data
+-- ─────────────────────────────────────────────────────────────
+local _accountsCache = {}
+local _accountsCacheTime = 0
+
+local function loadAccounts()
+    local path = "/data/users.dat"
+    if not fs.exists(path) then return {} end
+    local modTime = fs.attributes(path).modification
+    if modTime > _accountsCacheTime then
+        local f = io.open(path, "r")
+        if f then
+            local raw = f:read("*a")
+            f:close()
+            local ok, t = pcall(textutils.unserialise, raw)
+            if ok and type(t) == "table" then
+                _accountsCache = t
+                _accountsCacheTime = modTime
+            end
+        end
+    end
+    return _accountsCache
+end
+
+local function userIdToUsername(userId)
+    local users = loadAccounts()
+    for uname, u in pairs(users) do
+        if u.userId == userId then return uname end
+    end
+    return userId  -- fallback: return raw id if not found
+end
 
 -- ─────────────────────────────────────────────────────────────
 -- Storage
@@ -136,7 +168,7 @@ server.route("/market/post", function(clientId, req)
         title       = title:sub(1, C.MARKET_TITLE_MAX_LEN),
         description = (description or ""):sub(1, C.MARKET_DESC_MAX_LEN),
         wantedFor   = wantedFor:sub(1, C.MARKET_PRICE_MAX_LEN),
-        seller      = claims.userId,
+        seller      = userIdToUsername(claims.userId),
         status      = C.MARKET_STATUS_ACTIVE,
         createdAt   = os.epoch("utc"),
         views       = 0,

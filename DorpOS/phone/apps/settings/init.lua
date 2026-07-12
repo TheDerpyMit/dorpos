@@ -23,6 +23,7 @@ local SECTIONS = {
     { id = "network",     label = "Network",       icon = "~" },
     { id = "notifs",      label = "Notifications", icon = "N" },
     { id = "storage",     label = "Storage",       icon = "F" },
+    { id = "update",      label = "System Update", icon = "U" },
     { id = "about",       label = "About",         icon = "i" },
 }
 
@@ -255,6 +256,87 @@ local function sectionStorage()
     end
 end
 
+local function sectionUpdate()
+    local t = Theme.get()
+    ui.clear()
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(t.accent)
+    term.setTextColor(t.textOnAccent)
+    term.write(utils.padRight(" Update", W))
+
+    ui.write(2, 4, "System Update", t.accent, t.bg)
+    ui.write(2, 6, "This will back up your", t.textMuted, t.bg)
+    ui.write(2, 7, "data, wipe the phone,", t.textMuted, t.bg)
+    ui.write(2, 8, "and re-run setup.", t.textMuted, t.bg)
+
+    ui.button({ x = 2, y = 11, width = 14, label = "Update & Wipe", style = "danger" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+
+    while true do
+        local _, _, mx, my = os.pullEvent("mouse_click")
+        if my == H and mx <= 3 then return end
+        if my == 11 and mx >= 2 and mx <= 15 then
+            ui.dialog({
+                title = "Update System",
+                message = "Are you sure you want to back up and wipe?",
+                buttons = {
+                    { label = "Cancel", value = false },
+                    { label = "Yes, Wipe", value = true }
+                }
+            })
+            local _, ev = os.pullEvent("dorpos_dialog_result")
+            if ev.value == true then
+                ui.clear()
+                ui.write(2, 5, "Backing up data...", t.accent, t.bg)
+                os.sleep(0.5)
+
+                -- 1. Package /data
+                local backupData = {}
+                if fs.exists("/data") then
+                    for _, file in ipairs(fs.list("/data")) do
+                        if file:sub(-4) == ".dat" then
+                            local path = "/data/" .. file
+                            local f = io.open(path, "r")
+                            if f then
+                                local raw = f:read("*a")
+                                f:close()
+                                local ok, tData = pcall(textutils.unserialise, raw)
+                                if ok and type(tData) == "table" then
+                                    backupData[file] = tData
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- 2. Send backup
+                local ok = net.post(C.HOST_ACCOUNTS, "/account/backup", { data = backupData })
+                if not ok then
+                    ui.toast({ text = "Backup failed!", type = "error", y = H - 1 })
+                    os.sleep(2)
+                    return
+                end
+
+                ui.clear()
+                ui.write(2, 5, "Backup complete.", t.success, t.bg)
+                ui.write(2, 7, "Wiping phone...", t.danger, t.bg)
+                os.sleep(1)
+
+                -- 3. Wipe phone
+                if fs.exists("/boot.lua") then fs.delete("/boot.lua") end
+                if fs.exists("/data") then
+                    for _, f in ipairs(fs.list("/data")) do
+                        fs.delete("/data/" .. f)
+                    end
+                end
+
+                -- 4. Reboot into provisioning
+                os.reboot()
+            end
+        end
+    end
+end
+
 -- ─────────────────────────────────────────────────────────────
 -- Main loop
 -- ─────────────────────────────────────────────────────────────
@@ -275,6 +357,7 @@ while true do
                 elseif h.id == "network"    then sectionNetwork()
                 elseif h.id == "notifs"     then sectionNotifs()
                 elseif h.id == "storage"    then sectionStorage()
+                elseif h.id == "update"     then sectionUpdate()
                 elseif h.id == "about"      then
                     os.queueEvent("dorpos_launch_app", C.APP_ABOUT)
                     return

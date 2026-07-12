@@ -330,13 +330,28 @@ while true do
             elseif my == H - 8 and mx >= W - 7 then
                 -- Submit
                 if #newListing.title > 0 and #newListing.wantedFor > 0 then
-                    local ok, resp = postListing(newListing)
+                    -- Save a copy for submission
+                    local toPost = {
+                        title = newListing.title,
+                        description = newListing.description,
+                        wantedFor = newListing.wantedFor
+                    }
+                    -- Immediately clear the form to prevent double-submit
+                    newListing = { title = "", description = "", wantedFor = "" }
+                    
+                    ui.toast({ text = "Posting...", type = "info", y = H })
+                    os.sleep(0.5)
+
+                    local ok, resp = postListing(toPost)
                     if ok then
                         view = "browse"
                         fetchListings(); _hits = drawBrowse()
                     else
                         ui.toast({ text = "Post failed. Try again.", type = "error", y = H })
-                        os.sleep(1); drawPost()
+                        os.sleep(1)
+                        -- Restore form if failed
+                        newListing = toPost
+                        drawPost()
                     end
                 else
                     ui.toast({ text = "Fill in required fields.", type = "warning", y = H })

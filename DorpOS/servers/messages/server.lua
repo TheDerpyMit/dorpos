@@ -18,12 +18,26 @@ local server = Base.new(C.HOST_MESSAGES, "Messages")
 -- ─────────────────────────────────────────────────────────────
 -- Helper: resolve userId → username by reading accounts data
 -- ─────────────────────────────────────────────────────────────
+local _accountsCache = {}
+local _accountsCacheTime = 0
+
 local function loadAccounts()
-    if not fs.exists("/data/users.dat") then return {} end
-    local f = io.open("/data/users.dat", "r"); if not f then return {} end
-    local raw = f:read("*a"); f:close()
-    local ok, t = pcall(textutils.unserialise, raw)
-    return (ok and type(t) == "table") and t or {}
+    local path = "/data/users.dat"
+    if not fs.exists(path) then return {} end
+    local modTime = fs.attributes(path).modification
+    if modTime > _accountsCacheTime then
+        local f = io.open(path, "r")
+        if f then
+            local raw = f:read("*a")
+            f:close()
+            local ok, t = pcall(textutils.unserialise, raw)
+            if ok and type(t) == "table" then
+                _accountsCache = t
+                _accountsCacheTime = modTime
+            end
+        end
+    end
+    return _accountsCache
 end
 
 local function userIdToUsername(userId)

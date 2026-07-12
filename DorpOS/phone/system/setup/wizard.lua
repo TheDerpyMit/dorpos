@@ -413,6 +413,27 @@ local function stepLogin()
         state.set("username", savedName)
         state.delete("login_user")
         state.save()
+
+        ui.write(2, 7, "Checking for backups...", t.textMuted, t.bg)
+        local restOk, restResp = net.post(C.HOST_ACCOUNTS, "/account/restore", {})
+        if restOk and restResp.body and type(restResp.body.data) == "table" then
+            ui.write(2, 7, "Restoring your data... ", t.success, t.bg)
+            if not fs.exists("/data") then fs.makeDir("/data") end
+            for file, content in pairs(restResp.body.data) do
+                local f = io.open("/data/" .. file, "w")
+                if f then
+                    f:write(textutils.serialise(content))
+                    f:close()
+                end
+            end
+            os.sleep(0.5)
+            ui.write(2, 7, "Restore complete!      ", t.success, t.bg)
+            -- Re-load the state store since we just overwrote it
+            state = require("system.storage.storage").open("user_config")
+        else
+            ui.write(2, 7, "                       ", t.bg, t.bg)
+        end
+
         ui.write(2, 8,  "\4 Signed in!", t.success, t.bg)
         ui.write(2, 9,  "Welcome back, " .. savedName .. "!", t.text, t.bg)
         os.sleep(1.2)

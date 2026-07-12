@@ -373,4 +373,50 @@ server.route("/friends/add", function(clientId, req)
     server.ok(clientId, req, { friends = me.friends })
 end)
 
+-- ─────────────────────────────────────────────────────────────
+-- Cloud Backup & Restore
+-- ─────────────────────────────────────────────────────────────
+
+server.route("/account/backup", function(clientId, req)
+    local ok, claims = server.verifySession(req)
+    if not ok then return server.unauthorized(clientId, req) end
+
+    local backupData = req.body and req.body.data
+    if not backupData or type(backupData) ~= "table" then
+        return server.badRequest(clientId, req, "missing or invalid backup data")
+    end
+
+    if not fs.exists("/data/backups") then fs.makeDir("/data/backups") end
+    local f = io.open("/data/backups/" .. claims.userId .. ".dat", "w")
+    if not f then return server.fail(clientId, req, 500, "could not write backup") end
+    f:write(textutils.serialise(backupData))
+    f:close()
+
+    print("[accounts] Backed up data for " .. claims.userId)
+    server.ok(clientId, req, { status = "backed_up" })
+end)
+
+server.route("/account/restore", function(clientId, req)
+    local ok, claims = server.verifySession(req)
+    if not ok then return server.unauthorized(clientId, req) end
+
+    local path = "/data/backups/" .. claims.userId .. ".dat"
+    if not fs.exists(path) then
+        return server.fail(clientId, req, 404, "no backup found")
+    end
+
+    local f = io.open(path, "r")
+    if not f then return server.fail(clientId, req, 500, "could not read backup") end
+    local raw = f:read("*a")
+    f:close()
+
+    local success, parsed = pcall(textutils.unserialise, raw)
+    if not success or type(parsed) ~= "table" then
+        return server.fail(clientId, req, 500, "backup corrupted")
+    end
+
+    print("[accounts] Restored data for " .. claims.userId)
+    server.ok(clientId, req, { data = parsed })
+end)
+
 server.run()
