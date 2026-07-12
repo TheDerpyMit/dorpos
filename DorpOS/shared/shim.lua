@@ -51,7 +51,7 @@ if not package then
     end
 else
     -- If package exists, make sure our lookup folders are in the search path
-    local paths = { "/shared/?.lua", "/system/?.lua", "/servers/?.lua" }
+    local paths = { "/?.lua", "/?/init.lua", "/shared/?.lua", "/system/?.lua", "/servers/?.lua" }
     for _, p in ipairs(paths) do
         if not package.path:find(p, 1, true) then
             package.path = p .. ";" .. package.path
