@@ -117,6 +117,9 @@ print("[prov] Provisioning Server started")
 print("[prov] Computer ID: " .. os.getComputerID())
 print("[prov] Serving files from: " .. FILE_ROOT)
 
+-- Pre-warm manifest cache on startup
+getManifest()
+
 while true do
     local clientId, req = proto.receive()
     if not clientId then goto continue end

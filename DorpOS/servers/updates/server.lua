@@ -75,4 +75,7 @@ server.route("/updates/rebuild", function(clientId, req)
     server.ok(clientId, req, { files = #m.files, version = m.version })
 end)
 
+-- Pre-warm manifest cache on startup
+getManifest()
+
 server.run()
