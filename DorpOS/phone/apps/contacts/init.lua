@@ -1,6 +1,14 @@
 --[[  DorpOS :: phone/apps/contacts/init.lua
-    Contacts app — local address book synced with Accounts server.
+    Friends — manage your DorpOS friends, accept/decline requests,
+    and scan for nearby phones to add people instantly.
+
+    Views:
+        "friends"   — list of accepted friends, tap to open Messages
+        "requests"  — incoming friend requests with Accept / Decline
+        "scan"      — rednet discovery: broadcasts and lists nearby phones
+        "search"    — look up any user by @username and send a request
 ]]
+
 local C       = require("shared.constants")
 local ui      = require("system.ui.ui")
 local Theme   = require("system.theme.theme")
@@ -11,359 +19,493 @@ local utils   = require("system.utils.utils")
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 local kbComp = require("system.ui.components.keyboard")
 
-local store    = Storage.open("contacts")
-local contacts = store.get("list", {})
-local scroll   = 1
-local selIdx   = 1
-local searchQ  = ""
-local shifted  = false
+local PROTO = "dorpos_discover"
 
-local function saveContacts()
-    store.set("list", contacts)
-    store.save()
-end
+-- ─────────────────────────────────────────────────────────────
+-- State
+-- ─────────────────────────────────────────────────────────────
 
-local function sortedContacts()
-    local list = {}
-    for i, c in ipairs(contacts) do
-        table.insert(list, { idx = i, c = c })
-    end
-    table.sort(list, function(a, b)
-        return (a.c.name or "") < (b.c.name or "")
-    end)
-    local out = {}
-    for _, e in ipairs(list) do table.insert(out, e.c) end
-    return out
-end
+local userStore  = Storage.open("user_config")
+local myUsername = userStore.get("username", "me")
 
-local function filtered()
-    local all = sortedContacts()
-    if searchQ == "" then return all end
-    local q = searchQ:lower()
-    local out = {}
-    for _, c in ipairs(all) do
-        if (c.name or ""):lower():find(q, 1, true) then
-            table.insert(out, c)
-        end
-    end
-    return out
-end
+local view         = "friends"
+local friends      = {}   -- accepted friends
+local requests     = {}   -- incoming friend requests
+local scanResults  = {}   -- discovered nearby phones
+local shifted      = false
+local kbHits       = nil
 
--- ─── Look up a user by username on the server ────────────────
-local function lookupUsername(target)
-    -- Case-insensitive: server normalises to lowercase
-    local lower = target:lower()
-    local ok, resp = net.post(C.HOST_ACCOUNTS, "/account/lookup", { username = lower })
-    if ok and resp.body.username then
-        return resp.body.username
-    end
-    return nil
-end
+-- ─────────────────────────────────────────────────────────────
+-- Server calls
+-- ─────────────────────────────────────────────────────────────
 
--- ─── Contact editor ──────────────────────────────────────────
-local function editContact(c)
-    c = c or { name = "", username = "", note = "" }
-    local t = Theme.get()
-    local fields = { "name", "username", "note" }
-    local labels = { "Name", "Username", "Note" }
-    local values = { c.name or "", c.username or "", c.note or "" }
-    local focusIdx = 1
-    local kbHits = nil
-    local shouldExit = false
-    local saveResult = nil
-
-    local kbY = H - 7  -- keyboard top row
-
-    local function redraw()
-        ui.clear()
-        term.setCursorPos(1, 1)
-        term.setBackgroundColor(t.accent)
-        term.setTextColor(t.textOnAccent)
-        term.write(utils.padRight(" [< Back]   Contact   [Save]", W))
-
-        for i, lbl in ipairs(labels) do
-            ui.write(2, 1 + i * 2, lbl .. ":", t.textMuted, t.bg)
-            ui.textbox({ x = 2, y = 2 + i * 2, width = W - 3,
-                         value = values[i], focused = (i == focusIdx),
-                         placeholder = "Enter " .. lbl:lower() })
-        end
-
-        kbHits = kbComp.draw({
-            y = kbY, shifted = shifted,
-            onChar  = function(ch) values[focusIdx] = values[focusIdx] .. ch end,
-            onBack  = function()
-                if #values[focusIdx] > 0 then
-                    values[focusIdx] = values[focusIdx]:sub(1, -2)
-                end
-            end,
-            onEnter = function()
-                focusIdx = (focusIdx % #fields) + 1
-            end,
-            onShift = function() shifted = not shifted end,
-            onClose = function()
-                shouldExit = true
-                saveResult = nil
-            end,
-        })
-    end
-
-    redraw()
-
-    while true do
-        local ev = { os.pullEvent() }
-        local name = ev[1]
-
-        if shouldExit then return saveResult end
-
-        if name == "mouse_click" then
-            local mx, my = ev[3], ev[4]
-            -- Back button
-            if my == 1 and mx <= 9 then return nil end
-            -- Save button
-            if my == 1 and mx >= W - 5 then
-                -- Save contact; normalise username to lowercase
-                return { name = values[1], username = values[2]:lower(), note = values[3] }
-            end
-            -- Field focus
-            for i = 1, #fields do
-                if my == 2 + i * 2 then focusIdx = i end
-            end
-            if kbHits then kbComp.handleClick(kbHits, mx, my) end
-            if shouldExit then return saveResult end
-            redraw()
-        elseif name == "char" then
-            values[focusIdx] = values[focusIdx] .. ev[2]; redraw()
-        elseif name == "key" then
-            local key = ev[2]
-            if key == keys.backspace and #values[focusIdx] > 0 then
-                values[focusIdx] = values[focusIdx]:sub(1, -2); redraw()
-            elseif key == keys.tab then
-                focusIdx = (focusIdx % #fields) + 1; redraw()
-            end
-        end
+local function fetchFriends()
+    local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/list", {})
+    if ok and resp.body then
+        friends  = resp.body.friends  or {}
+        requests = resp.body.requests or {}
     end
 end
 
--- ─── Sync with server ────────────────────────────────────────
-local function syncContacts()
-    local ok, resp = net.post(C.HOST_ACCOUNTS, "/contacts/sync", {
-        contacts = contacts,
-    })
-    if ok and resp.body.contacts then
-        contacts = resp.body.contacts
-        saveContacts()
-    end
+local function sendRequest(username)
+    local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/request", { username = username })
+    return ok, resp and resp.body and resp.body.status
 end
 
--- ─── List ────────────────────────────────────────────────────
-local function drawList()
+local function acceptRequest(username)
+    local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/accept", { username = username })
+    if ok then fetchFriends() end
+    return ok
+end
+
+local function declineRequest(username)
+    local ok = net.post(C.HOST_ACCOUNTS, "/friends/decline", { username = username })
+    if ok then fetchFriends() end
+    return ok
+end
+
+local function removeFriend(username)
+    net.post(C.HOST_ACCOUNTS, "/friends/remove", { username = username })
+    fetchFriends()
+end
+
+-- Open a chat with a friend by launching Messages with a target
+local function openChat(username)
+    -- Start convo on messages server, then launch messages app
+    net.post(C.HOST_MESSAGES, "/messages/start", { with = username })
+    os.queueEvent("dorpos_launch_app", "messages", { openWith = username })
+    return  -- app exits, kernel handles launch
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Tab bar helper
+-- ─────────────────────────────────────────────────────────────
+
+local function drawTabBar()
     local t    = Theme.get()
-    local list = filtered()
-    ui.clear()
+    local tabs = {
+        { id = "friends",  label = "Friends" },
+        { id = "requests", label = "Requests" },
+        { id = "scan",     label = "Scan" },
+        { id = "search",   label = "Search" },
+    }
+    local tabW = math.floor(W / #tabs)
+    for i, tab in ipairs(tabs) do
+        local x   = 1 + (i - 1) * tabW
+        local isSel = (tab.id == view)
+        local bg  = isSel and t.accent or t.bgCard
+        local fg  = isSel and t.textOnAccent or t.textMuted
+        term.setCursorPos(x, 2)
+        term.setBackgroundColor(bg)
+        term.setTextColor(fg)
+        term.write(utils.padRight(utils.centre(tab.label, tabW), tabW))
+    end
+end
 
+local function drawHeader()
+    local t = Theme.get()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    local title = " Contacts"
-    local btn = "[@user] [sync] [+]"
-    term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
+    term.write(utils.padRight(" Friends", W))
+    drawTabBar()
+end
 
-    term.setCursorPos(1, 2)
-    term.setBackgroundColor(t.bgInput)
-    term.setTextColor(t.text)
-    term.write(utils.padRight("  " .. (searchQ == "" and "Search..." or searchQ), W))
+-- ─────────────────────────────────────────────────────────────
+-- Friends list view
+-- ─────────────────────────────────────────────────────────────
 
-    local listH = H - 3
-    local _hits = {}
-    for i = scroll, math.min(scroll + listH - 1, #list) do
-        local c   = list[i]
-        local ry  = 3 + (i - scroll)
-        local isSel = (i == selIdx)
-        local bg  = isSel and t.accent or t.bg
-        local fg  = isSel and t.textOnAccent or t.text
-        term.setCursorPos(1, ry)
-        term.setBackgroundColor(bg)
-        term.setTextColor(fg)
-        local sub = c.username and ("@" .. c.username) or ""
-        term.write(utils.padRight("  " .. utils.truncate(c.name or "?", W - 6) .. "  " .. utils.truncate(sub, 6), W))
-        table.insert(_hits, { y = ry, idx = i })
+local function drawFriends()
+    local t = Theme.get()
+    ui.clear()
+    drawHeader()
+
+    -- Badge on "Requests" tab if there are any
+    if #requests > 0 then
+        local tabW = math.floor(W / 4)
+        term.setCursorPos(1 + tabW, 2)
+        term.setBackgroundColor(t.bgCard)
+        term.setTextColor(t.danger)
+        term.write("[" .. #requests .. "]")
     end
 
-    if #list == 0 then
-        ui.write(2, 6, "No contacts.", t.textMuted, t.bg)
+    local _hits = {}
+
+    if #friends == 0 then
+        ui.write(2, 5, "No friends yet.", t.textMuted, t.bg)
+        ui.write(2, 6, "Use Search or Scan", t.textMuted, t.bg)
+        ui.write(2, 7, "to find people.", t.textMuted, t.bg)
+    else
+        for i, f in ipairs(friends) do
+            local ry = 3 + i
+            if ry > H - 2 then break end
+            term.setCursorPos(1, ry)
+            term.setBackgroundColor(t.bg)
+            term.setTextColor(t.text)
+            term.write(utils.padRight("  @" .. f.username, W - 10))
+            term.setBackgroundColor(t.accent)
+            term.setTextColor(t.textOnAccent)
+            term.write("[Message]")
+            term.setBackgroundColor(t.bg)
+            term.write(" ")
+            table.insert(_hits, { y = ry, username = f.username })
+        end
     end
 
     ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
-    return _hits, list
+    return _hits
 end
 
-local _hits, list = drawList()
+-- ─────────────────────────────────────────────────────────────
+-- Friend requests view
+-- ─────────────────────────────────────────────────────────────
+
+local reqHits = {}
+
+local function drawRequests()
+    local t = Theme.get()
+    ui.clear()
+    drawHeader()
+
+    reqHits = {}
+
+    if #requests == 0 then
+        ui.write(2, 5, "No pending requests.", t.textMuted, t.bg)
+        ui.write(2, 6, "When someone adds you,", t.textMuted, t.bg)
+        ui.write(2, 7, "they'll appear here.", t.textMuted, t.bg)
+    else
+        ui.write(2, 4, "Incoming requests:", t.textMuted, t.bg)
+        for i, r in ipairs(requests) do
+            local ry = 4 + i
+            if ry > H - 2 then break end
+            -- Username
+            term.setCursorPos(1, ry)
+            term.setBackgroundColor(t.bg)
+            term.setTextColor(t.text)
+            term.write(utils.padRight("  @" .. r.username, W - 12))
+            -- Accept button
+            term.setBackgroundColor(t.success)
+            term.setTextColor(t.textOnAccent)
+            term.write("[OK]")
+            term.setBackgroundColor(t.bg)
+            term.write(" ")
+            -- Decline button
+            term.setBackgroundColor(t.danger)
+            term.setTextColor(t.textOnAccent)
+            term.write("[X]")
+            term.setBackgroundColor(t.bg)
+            term.write(" ")
+            table.insert(reqHits, {
+                y          = ry,
+                username   = r.username,
+                acceptX    = W - 11,
+                declineX   = W - 6,
+            })
+        end
+    end
+
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Scan view — rednet discovery
+-- ─────────────────────────────────────────────────────────────
+
+local function runScan()
+    local t = Theme.get()
+    ui.clear()
+    drawHeader()
+    ui.write(2, 5, "Scanning nearby phones...", t.textMuted, t.bg)
+
+    -- Broadcast discovery ping
+    rednet.broadcast({
+        type = "dorpos.discover",
+        from = myUsername,
+    }, PROTO)
+
+    -- Collect responses for 3 seconds
+    scanResults = {}
+    local seen = {}
+    seen[myUsername:lower()] = true  -- don't show ourselves
+
+    local deadline = os.clock() + 3
+    while os.clock() < deadline do
+        local remaining = deadline - os.clock()
+        local senderId, msg = rednet.receive(PROTO, math.max(0.1, remaining))
+        if senderId and type(msg) == "table"
+           and msg.type == "dorpos.discover.reply"
+           and type(msg.username) == "string" then
+            local uname = msg.username:lower()
+            if not seen[uname] then
+                seen[uname] = true
+                table.insert(scanResults, { username = msg.username, id = senderId })
+            end
+        end
+    end
+
+    -- Draw results
+    ui.clear()
+    drawHeader()
+
+    if #scanResults == 0 then
+        ui.write(2, 5, "No phones found nearby.", t.textMuted, t.bg)
+        ui.write(2, 6, "Make sure others have", t.textMuted, t.bg)
+        ui.write(2, 7, "DorpOS running.", t.textMuted, t.bg)
+    else
+        ui.write(2, 4, "Found " .. #scanResults .. " phone(s):", t.textMuted, t.bg)
+        for i, r in ipairs(scanResults) do
+            local ry = 4 + i
+            if ry > H - 2 then break end
+            -- Check if already friends
+            local isFriend = false
+            for _, f in ipairs(friends) do
+                if f.username:lower() == r.username:lower() then isFriend = true end
+            end
+            term.setCursorPos(1, ry)
+            term.setBackgroundColor(t.bg)
+            term.setTextColor(t.text)
+            term.write(utils.padRight("  @" .. r.username, W - 10))
+            if isFriend then
+                term.setBackgroundColor(t.bgCard)
+                term.setTextColor(t.textMuted)
+                term.write(" Friends ")
+            else
+                term.setBackgroundColor(t.accent)
+                term.setTextColor(t.textOnAccent)
+                term.write("[Add +] ")
+            end
+        end
+    end
+
+    ui.button({ x = W - 9, y = H, width = 9, label = "Rescan", style = "primary" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+end
+
+local function drawScan()
+    -- scanResults already populated, just redraw
+    local t = Theme.get()
+    ui.clear()
+    drawHeader()
+
+    if #scanResults == 0 then
+        ui.write(2, 5, "Tap Scan to start.", t.textMuted, t.bg)
+        ui.write(2, 6, "Discovers nearby", t.textMuted, t.bg)
+        ui.write(2, 7, "DorpOS phones.", t.textMuted, t.bg)
+        ui.button({ x = math.floor((W - 12) / 2), y = 9, width = 12, label = "Scan Now!", style = "primary" })
+    else
+        ui.write(2, 4, "Nearby phones:", t.textMuted, t.bg)
+        for i, r in ipairs(scanResults) do
+            local ry = 4 + i
+            if ry > H - 2 then break end
+            local isFriend = false
+            for _, f in ipairs(friends) do
+                if f.username:lower() == r.username:lower() then isFriend = true end
+            end
+            term.setCursorPos(1, ry)
+            term.setBackgroundColor(t.bg)
+            term.setTextColor(t.text)
+            term.write(utils.padRight("  @" .. r.username, W - 10))
+            if isFriend then
+                term.setBackgroundColor(t.bgCard)
+                term.setTextColor(t.textMuted)
+                term.write(" Friends ")
+            else
+                term.setBackgroundColor(t.accent)
+                term.setTextColor(t.textOnAccent)
+                term.write("[Add +] ")
+            end
+        end
+        ui.button({ x = W - 9, y = H, width = 9, label = "Rescan", style = "primary" })
+    end
+
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Search view — add by @username
+-- ─────────────────────────────────────────────────────────────
+
+local searchQuery  = ""
+local searchStatus = ""
+local searchOk     = true
+
+local function drawSearch()
+    local t = Theme.get()
+    ui.clear()
+    drawHeader()
+
+    ui.write(2, 4, "Enter @username to add:", t.textMuted, t.bg)
+    ui.textbox({ x = 2, y = 5, width = W - 3, value = searchQuery,
+                 focused = true, placeholder = "e.g. derpymit" })
+
+    if searchStatus ~= "" then
+        local fg = searchOk and t.success or t.danger
+        ui.write(2, 7, utils.truncate(searchStatus, W - 2), fg, t.bg)
+    end
+
+    kbHits = kbComp.draw({
+        y = H - 7, shifted = shifted,
+        onChar  = function(c) searchQuery = searchQuery .. c; searchStatus = "" end,
+        onBack  = function()
+            if #searchQuery > 0 then searchQuery = searchQuery:sub(1, -2); searchStatus = "" end
+        end,
+        onEnter = function()
+            local target = searchQuery:lower()
+            if #target == 0 then return end
+
+            -- Verify user exists
+            searchStatus = "Searching..."
+            searchOk = true
+
+            local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/lookup", { username = target })
+            if not ok or not (resp.body and resp.body.username) then
+                searchStatus = "User '" .. target .. "' not found!"
+                searchOk = false
+                return
+            end
+
+            local canonical = resp.body.username
+            -- Send friend request
+            local reqOk, status = sendRequest(canonical)
+            if reqOk then
+                if status == "accepted" then
+                    searchStatus = "You're now friends! \4"
+                    fetchFriends()
+                else
+                    searchStatus = "Friend request sent! \4"
+                end
+                searchOk = true
+                searchQuery = ""
+            else
+                searchStatus = "Could not send request."
+                searchOk = false
+            end
+        end,
+        onShift = function() shifted = not shifted end,
+        onClose = function() view = "friends" end,
+    })
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Tab hit detection
+-- ─────────────────────────────────────────────────────────────
+
+local tabs = { "friends", "requests", "scan", "search" }
+local function tabHit(mx, my)
+    if my ~= 2 then return nil end
+    local tabW = math.floor(W / #tabs)
+    local idx  = math.ceil(mx / tabW)
+    return tabs[idx]
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Main
+-- ─────────────────────────────────────────────────────────────
+
+fetchFriends()
+
+local friendHits = drawFriends()
 
 while true do
     local ev = { os.pullEvent() }
     local name = ev[1]
 
+    -- Tab switching (row 2 = tab bar)
     if name == "mouse_click" then
         local mx, my = ev[3], ev[4]
-        if my == H and mx <= 3 then return end
-        if my == 1 then
-            -- "[@user]" button — find & add contact by username
-            local btnUserEnd   = W
-            local btnPlusStart = W - 2
-            local btnSyncStart = W - 9
-            local btnUserStart = W - 16
-            if mx >= btnPlusStart then
-                -- [+] New contact (manual entry)
-                local result = editContact(nil)
-                if result and #(result.name or "") > 0 then
-                    table.insert(contacts, result)
-                    saveContacts()
-                end
-                _hits, list = drawList()
-            elseif mx >= btnSyncStart and mx < btnPlusStart then
-                -- [sync]
-                syncContacts()
-                _hits, list = drawList()
-            elseif mx >= btnUserStart and mx < btnSyncStart then
-                -- [@user] — look up by username
-                local t = Theme.get()
-                ui.clear()
-                term.setCursorPos(1, 1)
-                term.setBackgroundColor(t.accent)
-                term.setTextColor(t.textOnAccent)
-                term.write(utils.padRight(" Find by Username", W))
-                ui.write(2, 4, "Enter their @username:", t.textMuted, t.bg)
+        local tab = tabHit(mx, my)
+        if tab and tab ~= view then
+            view = tab
+            searchStatus = ""
+            if view == "friends"  then friendHits = drawFriends()
+            elseif view == "requests" then drawRequests()
+            elseif view == "scan"     then drawScan()
+            elseif view == "search"   then drawSearch()
+            end
+        end
+    end
 
-                local targetName = ""
-                local kbShift    = false
-                local fkbHits    = nil
-
-                local function redrawFind()
-                    -- Clear field area
-                    term.setCursorPos(1, 5)
-                    term.setBackgroundColor(t.bgInput)
-                    term.setTextColor(t.text)
-                    term.write(utils.padRight("  @" .. targetName, W))
-                    -- Status line
-                    term.setCursorPos(1, 7)
-                    term.setBackgroundColor(t.bg)
-                    term.setTextColor(t.textMuted)
-                    term.write(utils.padRight("  Tap ENT to search, 'v' to cancel", W))
-                    fkbHits = kbComp.draw({
-                        y = H - 7, shifted = kbShift,
-                        onChar  = function(c) targetName = targetName .. c end,
-                        onBack  = function()
-                            if #targetName > 0 then targetName = targetName:sub(1,-2) end
-                        end,
-                        onEnter = function()
-                            -- Perform lookup
-                            local found = lookupUsername(targetName)
-                            if found then
-                                -- Pre-populate a new contact with the found username
-                                local result = editContact({ name = found, username = found, note = "" })
-                                if result and #(result.name or "") > 0 then
-                                    -- Don't add duplicate usernames
-                                    local dup = false
-                                    for _, ct in ipairs(contacts) do
-                                        if (ct.username or ""):lower() == found:lower() then dup = true end
-                                    end
-                                    if not dup then
-                                        table.insert(contacts, result)
-                                        saveContacts()
-                                    end
-                                end
-                                _hits, list = drawList()
-                                return
-                            else
-                                -- Show not found
-                                term.setCursorPos(1, 7)
-                                term.setBackgroundColor(t.bg)
-                                term.setTextColor(t.danger)
-                                term.write(utils.padRight("  User '@" .. targetName .. "' not found!", W))
-                                os.sleep(1.5)
-                            end
-                        end,
-                        onShift = function() kbShift = not kbShift end,
-                        onClose = function()
-                            -- Cancel — go back to list
-                            _hits, list = drawList()
-                        end,
-                    })
-                end
-
-                redrawFind()
-                local findDone = false
-                while not findDone do
-                    local fev = { os.pullEvent() }
-                    if fev[1] == "mouse_click" then
-                        local fx, fy = fev[3], fev[4]
-                        if fkbHits and kbComp.handleClick(fkbHits, fx, fy) then
-                            -- Check if close was pressed (list was redrawn)
-                            findDone = true
-                        else
-                            redrawFind()
-                        end
-                    elseif fev[1] == "char" then
-                        targetName = targetName .. fev[2]; redrawFind()
-                    elseif fev[1] == "key" then
-                        if fev[2] == keys.backspace and #targetName > 0 then
-                            targetName = targetName:sub(1,-2); redrawFind()
-                        elseif fev[2] == keys.enter then
-                            local found = lookupUsername(targetName)
-                            if found then
-                                local result = editContact({ name = found, username = found, note = "" })
-                                if result and #(result.name or "") > 0 then
-                                    local dup = false
-                                    for _, ct in ipairs(contacts) do
-                                        if (ct.username or ""):lower() == found:lower() then dup = true end
-                                    end
-                                    if not dup then
-                                        table.insert(contacts, result)
-                                        saveContacts()
-                                    end
-                                end
-                                findDone = true
-                                _hits, list = drawList()
-                            else
-                                term.setCursorPos(1, 7)
-                                term.setBackgroundColor(t.bg)
-                                term.setTextColor(t.danger)
-                                term.write(utils.padRight("  User '@" .. targetName .. "' not found!", W))
-                                os.sleep(1.5)
-                                redrawFind()
-                            end
-                        end
-                    end
+    -- View-specific handling
+    if view == "friends" then
+        if name == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if my == H and mx <= 3 then return end
+            for _, h in ipairs(friendHits) do
+                if my == h.y then
+                    -- Tap anywhere on friend row → open chat
+                    openChat(h.username)
+                    return  -- app exits, kernel re-launches messages
                 end
             end
-        else
-            for _, h in ipairs(_hits) do
+        end
+
+    elseif view == "requests" then
+        if name == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if my == H and mx <= 3 then return end
+            for _, h in ipairs(reqHits) do
                 if my == h.y then
-                    selIdx = h.idx
-                    local result = editContact(list[h.idx])
-                    if result then
-                        -- Find original and update
-                        local orig = list[h.idx]
-                        for j, c in ipairs(contacts) do
-                            if c == orig then contacts[j] = result; break end
-                        end
-                        saveContacts()
+                    if mx >= h.acceptX and mx < h.acceptX + 4 then
+                        acceptRequest(h.username)
+                        drawRequests()
+                    elseif mx >= h.declineX and mx < h.declineX + 3 then
+                        declineRequest(h.username)
+                        drawRequests()
                     end
-                    _hits, list = drawList()
                     break
                 end
             end
         end
-    elseif name == "char" then
-        searchQ = searchQ .. ev[2]
-        _hits, list = drawList()
-    elseif name == "key" then
-        if ev[2] == keys.backspace and #searchQ > 0 then
-            searchQ = searchQ:sub(1, -2)
-            _hits, list = drawList()
+
+    elseif view == "scan" then
+        if name == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if my == H and mx <= 3 then return end
+            if (my == H and mx >= W - 9) or (my == 9 and #scanResults == 0) then
+                -- Scan / Rescan button
+                runScan()
+            else
+                -- Tap on a discovered phone
+                local offset = 5  -- results start at row 5
+                for i, r in ipairs(scanResults) do
+                    local ry = 4 + i
+                    if my == ry and mx >= W - 9 then
+                        -- Check not already friends
+                        local isFriend = false
+                        for _, f in ipairs(friends) do
+                            if f.username:lower() == r.username:lower() then isFriend = true end
+                        end
+                        if not isFriend then
+                            local t = Theme.get()
+                            local reqOk, status = sendRequest(r.username)
+                            -- Show brief confirmation
+                            term.setCursorPos(1, ry)
+                            term.setBackgroundColor(t.bg)
+                            term.setTextColor(reqOk and t.success or t.danger)
+                            term.write(utils.padRight("  " .. (reqOk and "Request sent!" or "Failed"), W))
+                            os.sleep(1)
+                            fetchFriends()
+                            drawScan()
+                        end
+                        break
+                    end
+                end
+            end
         end
-    elseif name == "mouse_scroll" then
-        scroll = math.max(1, scroll + ev[2])
-        _hits, list = drawList()
+
+    elseif view == "search" then
+        if name == "mouse_click" then
+            local mx, my = ev[3], ev[4]
+            if my == H and mx <= 3 then return end
+            if kbHits then kbComp.handleClick(kbHits, mx, my) end
+            if view == "search" then drawSearch()
+            elseif view == "friends" then friendHits = drawFriends() end
+        elseif name == "char" then
+            searchQuery = searchQuery .. ev[2]; searchStatus = ""; drawSearch()
+        elseif name == "key" then
+            if ev[2] == keys.backspace and #searchQuery > 0 then
+                searchQuery = searchQuery:sub(1, -2); searchStatus = ""; drawSearch()
+            end
+        end
     end
 end

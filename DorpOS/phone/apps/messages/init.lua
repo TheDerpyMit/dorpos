@@ -26,15 +26,16 @@ end
 
 local msgCache   = Storage.open("msg_cache")
 local convos     = msgCache.get("convos", {})   -- list of { id, name, messages=[], unread }
-local view       = "list"  -- "list" | "chat"
-local activeConvo = nil
-local composeText = ""
-local shifted     = false
-local kbHits      = nil
-local chatScroll  = 0
-local listScroll  = 1
-local newConvoMode = false
+local view          = "list"  -- "list" | "chat" | "newconvo"
+local activeConvo   = nil
+local composeText   = ""
+local shifted       = false
+local kbHits        = nil
+local chatScroll    = 0
+local listScroll    = 1
+local newConvoMode  = false
 local newConvoTarget = ""
+local friendsList   = {}  -- cached from accounts server
 
 -- ─────────────────────────────────────────────────────────────
 -- Server communication
@@ -95,6 +96,13 @@ local function startConvo(targetUsername)
         return resp.body.convoId
     end
     return nil
+end
+
+local function fetchFriends()
+    local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/list", {})
+    if ok and resp.body then
+        friendsList = resp.body.friends or {}
+    end
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -225,24 +233,47 @@ end
 -- Status message shown inside the new-convo screen
 local newConvoStatus = ""
 local newConvoStatusOk = true
+local friendPickHits = {}
 
 local function drawNewConvo()
     local t = Theme.get()
     ui.clear()
-    -- Header: tap anywhere on row 1 (left of centre) to go back
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
     term.write(utils.padRight(" < New Message", W))
 
-    ui.write(2, 3, "To (username):", t.textMuted, t.bg)
-    ui.textbox({ x = 2, y = 4, width = W - 3, value = newConvoTarget,
-                 focused = true, placeholder = "e.g. derpymit" })
+    -- ── Friends picker ──────────────────────────────────────
+    friendPickHits = {}
+    if #friendsList > 0 then
+        ui.write(2, 3, "Send to a friend:", t.textMuted, t.bg)
+        local maxShow = math.min(#friendsList, H - 12)
+        for i = 1, maxShow do
+            local f  = friendsList[i]
+            local ry = 3 + i
+            term.setCursorPos(1, ry)
+            term.setBackgroundColor(t.bgCard)
+            term.setTextColor(t.text)
+            term.write(utils.padRight("  @" .. f.username, W))
+            table.insert(friendPickHits, { y = ry, username = f.username })
+        end
+    else
+        ui.write(2, 4, "No friends yet.", t.textMuted, t.bg)
+        ui.write(2, 5, "Add friends in the", t.textMuted, t.bg)
+        ui.write(2, 6, "Friends app first,", t.textMuted, t.bg)
+        ui.write(2, 7, "or type a username below.", t.textMuted, t.bg)
+    end
 
-    -- Status / error line
+    -- ── Username fallback text box ──────────────────────────
+    local inputY = H - 9
+    ui.divider(inputY - 1)
+    ui.write(2, inputY, "Or type @username:", t.textMuted, t.bg)
+    ui.textbox({ x = 2, y = inputY + 1, width = W - 3, value = newConvoTarget,
+                 focused = (#friendsList == 0), placeholder = "username" })
+
     if newConvoStatus ~= "" then
         local fg = newConvoStatusOk and t.success or t.danger
-        ui.write(2, 6, utils.truncate(newConvoStatus, W - 2), fg, t.bg)
+        ui.write(2, inputY + 2, utils.truncate(newConvoStatus, W - 2), fg, t.bg)
     end
 
     kbHits = kbComp.draw({
@@ -257,26 +288,19 @@ local function drawNewConvo()
         onEnter = function()
             local target = newConvoTarget:lower()
             if #target == 0 then return end
-
-            -- Block messaging yourself
             if target == myUsername:lower() then
                 newConvoStatus = "That's you!"
                 newConvoStatusOk = false
                 return
             end
-
-            -- Verify the account exists first
             newConvoStatus = "Checking..."
             newConvoStatusOk = true
-
             local canonical = lookupUser(target)
             if not canonical then
                 newConvoStatus = "User '" .. target .. "' not found!"
                 newConvoStatusOk = false
                 return
             end
-
-            -- Account confirmed — open (or reuse) the conversation
             local id = startConvo(canonical)
             if id then
                 local found = false
@@ -288,7 +312,6 @@ local function drawNewConvo()
                 for _, c in ipairs(convos) do
                     if c.id == id then activeConvo = c; break end
                 end
-                -- Also refresh from server so the convo object is current
                 fetchConvos()
                 for _, c in ipairs(convos) do
                     if c.id == id then activeConvo = c; break end
@@ -317,6 +340,7 @@ end
 
 -- Initial fetch
 fetchConvos()
+fetchFriends()
 
 local _hits = drawList()
 
@@ -401,10 +425,35 @@ while true do
                 newConvoMode   = false
                 newConvoStatus = ""
                 view = "list"
-            elseif kbHits then
-                kbComp.handleClick(kbHits, mx, my)
+            else
+                -- Check friend pick hits first
+                local pickedFriend = false
+                for _, h in ipairs(friendPickHits) do
+                    if my == h.y then
+                        -- Open chat with this friend directly
+                        local id = startConvo(h.username)
+                        if id then
+                            local found = false
+                            for _, c in ipairs(convos) do if c.id == id then found = true end end
+                            if not found then
+                                table.insert(convos, { id = id, name = h.username, messages = {}, unread = 0 })
+                                msgCache.set("convos", convos); msgCache.save()
+                            end
+                            for _, c in ipairs(convos) do
+                                if c.id == id then activeConvo = c; break end
+                            end
+                            chatMessages = fetchMessages(id) or {}
+                            newConvoMode = false
+                            view = "chat"
+                        end
+                        pickedFriend = true
+                        break
+                    end
+                end
+                if not pickedFriend and kbHits then
+                    kbComp.handleClick(kbHits, mx, my)
+                end
             end
-            -- Only redraw if we're still in newconvo (close/back changes view)
             if view == "newconvo" then drawNewConvo() end
         elseif name == "char" then
             newConvoTarget = newConvoTarget .. ev[2]

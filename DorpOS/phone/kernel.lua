@@ -35,6 +35,31 @@ local anim    = require("system.animation.animation")
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 
 -- ─────────────────────────────────────────────────────────────
+-- Discovery responder: reply to nearby phone scans
+-- ─────────────────────────────────────────────────────────────
+
+local Storage = require("system.storage.storage")
+
+local function discoveryResponder()
+    local PROTO = "dorpos_discover"
+    while true do
+        -- Wait for an incoming discovery ping
+        local senderId, msg = rednet.receive(PROTO, 5)
+        if senderId and type(msg) == "table" and msg.type == "dorpos.discover" then
+            -- Reply with our username so the scanner can add us
+            local userStore  = Storage.open("user_config")
+            local myUsername = userStore.get("username", nil)
+            if myUsername then
+                rednet.send(senderId, {
+                    type     = "dorpos.discover.reply",
+                    username = myUsername,
+                }, PROTO)
+            end
+        end
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Kernel state
 -- ─────────────────────────────────────────────────────────────
 
@@ -212,7 +237,8 @@ parallel.waitForAny(
             os.sleep(0.5)
         end
     end,
-    processSystemEvents
+    processSystemEvents,
+    discoveryResponder  -- replies to nearby phones scanning for friends
 )
 
 log.info("kernel", "Kernel shutting down")
