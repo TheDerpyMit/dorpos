@@ -49,6 +49,17 @@ local function filtered()
     return out
 end
 
+-- ─── Look up a user by username on the server ────────────────
+local function lookupUsername(target)
+    -- Case-insensitive: server normalises to lowercase
+    local lower = target:lower()
+    local ok, resp = net.post(C.HOST_ACCOUNTS, "/account/lookup", { username = lower })
+    if ok and resp.body.username then
+        return resp.body.username
+    end
+    return nil
+end
+
 -- ─── Contact editor ──────────────────────────────────────────
 local function editContact(c)
     c = c or { name = "", username = "", note = "" }
@@ -58,13 +69,17 @@ local function editContact(c)
     local values = { c.name or "", c.username or "", c.note or "" }
     local focusIdx = 1
     local kbHits = nil
+    local shouldExit = false
+    local saveResult = nil
+
+    local kbY = H - 7  -- keyboard top row
 
     local function redraw()
         ui.clear()
         term.setCursorPos(1, 1)
         term.setBackgroundColor(t.accent)
         term.setTextColor(t.textOnAccent)
-        term.write(utils.padRight(" Contact   [Save]", W))
+        term.write(utils.padRight(" [< Back]   Contact   [Save]", W))
 
         for i, lbl in ipairs(labels) do
             ui.write(2, 1 + i * 2, lbl .. ":", t.textMuted, t.bg)
@@ -74,7 +89,7 @@ local function editContact(c)
         end
 
         kbHits = kbComp.draw({
-            y = H - 6, shifted = shifted,
+            y = kbY, shifted = shifted,
             onChar  = function(ch) values[focusIdx] = values[focusIdx] .. ch end,
             onBack  = function()
                 if #values[focusIdx] > 0 then
@@ -85,7 +100,10 @@ local function editContact(c)
                 focusIdx = (focusIdx % #fields) + 1
             end,
             onShift = function() shifted = not shifted end,
-            onClose = function() end,
+            onClose = function()
+                shouldExit = true
+                saveResult = nil
+            end,
         })
     end
 
@@ -95,17 +113,23 @@ local function editContact(c)
         local ev = { os.pullEvent() }
         local name = ev[1]
 
+        if shouldExit then return saveResult end
+
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
+            -- Back button
+            if my == 1 and mx <= 9 then return nil end
+            -- Save button
             if my == 1 and mx >= W - 5 then
-                -- Save
-                return { name = values[1], username = values[2], note = values[3] }
+                -- Save contact; normalise username to lowercase
+                return { name = values[1], username = values[2]:lower(), note = values[3] }
             end
             -- Field focus
             for i = 1, #fields do
                 if my == 2 + i * 2 then focusIdx = i end
             end
             if kbHits then kbComp.handleClick(kbHits, mx, my) end
+            if shouldExit then return saveResult end
             redraw()
         elseif name == "char" then
             values[focusIdx] = values[focusIdx] .. ev[2]; redraw()
@@ -141,7 +165,7 @@ local function drawList()
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
     local title = " Contacts"
-    local btn = "[sync] [+]"
+    local btn = "[@user] [sync] [+]"
     term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     term.setCursorPos(1, 2)
@@ -183,19 +207,134 @@ while true do
         local mx, my = ev[3], ev[4]
         if my == H and mx <= 3 then return end
         if my == 1 then
-            if mx >= W - 9 and mx <= W - 4 then
-                -- Sync
-                syncContacts()
-                list = filtered()
-                _hits, list = drawList()
-            elseif mx >= W - 2 then
-                -- New contact
+            -- "[@user]" button — find & add contact by username
+            local btnUserEnd   = W
+            local btnPlusStart = W - 2
+            local btnSyncStart = W - 9
+            local btnUserStart = W - 16
+            if mx >= btnPlusStart then
+                -- [+] New contact (manual entry)
                 local result = editContact(nil)
                 if result and #(result.name or "") > 0 then
                     table.insert(contacts, result)
                     saveContacts()
                 end
                 _hits, list = drawList()
+            elseif mx >= btnSyncStart and mx < btnPlusStart then
+                -- [sync]
+                syncContacts()
+                _hits, list = drawList()
+            elseif mx >= btnUserStart and mx < btnSyncStart then
+                -- [@user] — look up by username
+                local t = Theme.get()
+                ui.clear()
+                term.setCursorPos(1, 1)
+                term.setBackgroundColor(t.accent)
+                term.setTextColor(t.textOnAccent)
+                term.write(utils.padRight(" Find by Username", W))
+                ui.write(2, 4, "Enter their @username:", t.textMuted, t.bg)
+
+                local targetName = ""
+                local kbShift    = false
+                local fkbHits    = nil
+
+                local function redrawFind()
+                    -- Clear field area
+                    term.setCursorPos(1, 5)
+                    term.setBackgroundColor(t.bgInput)
+                    term.setTextColor(t.text)
+                    term.write(utils.padRight("  @" .. targetName, W))
+                    -- Status line
+                    term.setCursorPos(1, 7)
+                    term.setBackgroundColor(t.bg)
+                    term.setTextColor(t.textMuted)
+                    term.write(utils.padRight("  Tap ENT to search, 'v' to cancel", W))
+                    fkbHits = kbComp.draw({
+                        y = H - 7, shifted = kbShift,
+                        onChar  = function(c) targetName = targetName .. c end,
+                        onBack  = function()
+                            if #targetName > 0 then targetName = targetName:sub(1,-2) end
+                        end,
+                        onEnter = function()
+                            -- Perform lookup
+                            local found = lookupUsername(targetName)
+                            if found then
+                                -- Pre-populate a new contact with the found username
+                                local result = editContact({ name = found, username = found, note = "" })
+                                if result and #(result.name or "") > 0 then
+                                    -- Don't add duplicate usernames
+                                    local dup = false
+                                    for _, ct in ipairs(contacts) do
+                                        if (ct.username or ""):lower() == found:lower() then dup = true end
+                                    end
+                                    if not dup then
+                                        table.insert(contacts, result)
+                                        saveContacts()
+                                    end
+                                end
+                                _hits, list = drawList()
+                                return
+                            else
+                                -- Show not found
+                                term.setCursorPos(1, 7)
+                                term.setBackgroundColor(t.bg)
+                                term.setTextColor(t.danger)
+                                term.write(utils.padRight("  User '@" .. targetName .. "' not found!", W))
+                                os.sleep(1.5)
+                            end
+                        end,
+                        onShift = function() kbShift = not kbShift end,
+                        onClose = function()
+                            -- Cancel — go back to list
+                            _hits, list = drawList()
+                        end,
+                    })
+                end
+
+                redrawFind()
+                local findDone = false
+                while not findDone do
+                    local fev = { os.pullEvent() }
+                    if fev[1] == "mouse_click" then
+                        local fx, fy = fev[3], fev[4]
+                        if fkbHits and kbComp.handleClick(fkbHits, fx, fy) then
+                            -- Check if close was pressed (list was redrawn)
+                            findDone = true
+                        else
+                            redrawFind()
+                        end
+                    elseif fev[1] == "char" then
+                        targetName = targetName .. fev[2]; redrawFind()
+                    elseif fev[1] == "key" then
+                        if fev[2] == keys.backspace and #targetName > 0 then
+                            targetName = targetName:sub(1,-2); redrawFind()
+                        elseif fev[2] == keys.enter then
+                            local found = lookupUsername(targetName)
+                            if found then
+                                local result = editContact({ name = found, username = found, note = "" })
+                                if result and #(result.name or "") > 0 then
+                                    local dup = false
+                                    for _, ct in ipairs(contacts) do
+                                        if (ct.username or ""):lower() == found:lower() then dup = true end
+                                    end
+                                    if not dup then
+                                        table.insert(contacts, result)
+                                        saveContacts()
+                                    end
+                                end
+                                findDone = true
+                                _hits, list = drawList()
+                            else
+                                term.setCursorPos(1, 7)
+                                term.setBackgroundColor(t.bg)
+                                term.setTextColor(t.danger)
+                                term.write(utils.padRight("  User '@" .. targetName .. "' not found!", W))
+                                os.sleep(1.5)
+                                redrawFind()
+                            end
+                        end
+                    end
+                end
             end
         else
             for _, h in ipairs(_hits) do

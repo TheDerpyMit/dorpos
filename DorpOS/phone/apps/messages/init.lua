@@ -19,6 +19,10 @@ local kbComp = require("system.ui.components.keyboard")
 
 local userStore  = Storage.open("user_config")
 local myUsername = userStore.get("username", "me")
+-- Refresh username at runtime in case it was just set by the wizard
+if myUsername == "me" or myUsername == "" then
+    myUsername = userStore.get("username", "me")
+end
 
 local msgCache   = Storage.open("msg_cache")
 local convos     = msgCache.get("convos", {})   -- list of { id, name, messages=[], unread }
@@ -142,7 +146,8 @@ local function drawChat()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" " .. utils.truncate(activeConvo.name or "Chat", W - 1), W))
+    -- Show "< Name" so user knows left side = back
+    term.write(utils.padRight(" < " .. utils.truncate(activeConvo.name or "Chat", W - 3), W))
 
     -- Messages
     -- Build line list from messages
@@ -211,14 +216,14 @@ local function drawNewConvo()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" New Message", W))
+    term.write(utils.padRight(" < New Message", W))
 
     ui.write(2, 4, "To (username):", t.textMuted, t.bg)
     ui.textbox({ x = 2, y = 5, width = W - 3, value = newConvoTarget,
                  focused = true, placeholder = "username" })
 
     kbHits = kbComp.draw({
-        y = H - 6, shifted = shifted,
+        y = H - 7, shifted = shifted,
         onChar  = function(c) newConvoTarget = newConvoTarget .. c end,
         onBack  = function()
             if #newConvoTarget > 0 then newConvoTarget = newConvoTarget:sub(1, -2) end

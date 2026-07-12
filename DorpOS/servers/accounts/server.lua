@@ -55,8 +55,14 @@ server.route("/account/create", function(clientId, req)
     if not username or not passHash then
         return server.badRequest(clientId, req, "missing username or passHash")
     end
+    -- Normalise to lowercase so usernames are case-insensitive
+    username = username:lower()
     if #username < 3 then
         return server.badRequest(clientId, req, "username too short")
+    end
+    -- Validate: letters, digits, underscore only
+    if not username:match("^[a-z0-9_]+$") then
+        return server.badRequest(clientId, req, "username may only contain letters, digits and underscores")
     end
     if users[username] then
         return server.fail(clientId, req, 409, "Username already taken")
@@ -77,7 +83,7 @@ server.route("/account/create", function(clientId, req)
     local token = tok.create(server._secret, tostring(deviceId or userId), userId, os.epoch("utc"))
 
     print("[accounts] Created: " .. username .. " id=" .. userId)
-    server.created(clientId, req, { userId = userId, token = token })
+    server.created(clientId, req, { userId = userId, token = token, username = username })
 end)
 
 -- Login
@@ -89,6 +95,8 @@ server.route("/account/login", function(clientId, req)
     if not username or not passHash then
         return server.badRequest(clientId, req)
     end
+    -- Normalise username to lowercase
+    username = username:lower()
 
     local user = users[username]
     if not user then return server.fail(clientId, req, 401, "Invalid credentials") end
@@ -98,7 +106,8 @@ server.route("/account/login", function(clientId, req)
 
     local token = tok.create(server._secret, tostring(deviceId or user.userId),
                               user.userId, os.epoch("utc"))
-    server.ok(clientId, req, { userId = user.userId, token = token })
+    -- Return username too so client can store the canonical name
+    server.ok(clientId, req, { userId = user.userId, token = token, username = user.username })
 end)
 
 -- Get profile
@@ -188,10 +197,11 @@ server.route("/friends/add", function(clientId, req)
     server.fail(clientId, req, 404, "Your account not found")
 end)
 
--- Lookup user by username (for messaging, marketplace)
+-- Lookup user by username (for messaging, marketplace) — case-insensitive
 server.route("/account/lookup", function(clientId, req)
     local username = req.body and req.body.username
     if not username then return server.badRequest(clientId, req) end
+    username = username:lower()
     local u = users[username]
     if not u then return server.fail(clientId, req, 404, "Not found") end
     server.ok(clientId, req, { userId = u.userId, username = u.username })

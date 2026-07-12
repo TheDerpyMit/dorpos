@@ -16,6 +16,25 @@ local C    = require("shared.constants")
 local server = Base.new(C.HOST_MESSAGES, "Messages")
 
 -- ─────────────────────────────────────────────────────────────
+-- Helper: resolve userId → username by reading accounts data
+-- ─────────────────────────────────────────────────────────────
+local function loadAccounts()
+    if not fs.exists("/data/users.dat") then return {} end
+    local f = io.open("/data/users.dat", "r"); if not f then return {} end
+    local raw = f:read("*a"); f:close()
+    local ok, t = pcall(textutils.unserialise, raw)
+    return (ok and type(t) == "table") and t or {}
+end
+
+local function userIdToUsername(userId)
+    local users = loadAccounts()
+    for uname, u in pairs(users) do
+        if u.userId == userId then return uname end
+    end
+    return userId  -- fallback: return raw id if not found
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Storage
 -- ─────────────────────────────────────────────────────────────
 
@@ -73,8 +92,8 @@ server.route("/messages/start", function(clientId, req)
     local with = req.body and req.body.with
     if not with then return server.badRequest(clientId, req, "missing 'with'") end
 
-    local userId = claims.userId
-    local convo  = getOrCreateConvo(userId, with)
+    local myUsername = userIdToUsername(claims.userId)
+    local convo      = getOrCreateConvo(myUsername, with)
     save("convos", convos)
 
     server.ok(clientId, req, { convoId = convo.id, convo = convo })
@@ -85,9 +104,10 @@ server.route("/messages/send", function(clientId, req)
     local ok, claims = server.verifySession(req)
     if not ok then return server.unauthorized(clientId, req) end
 
-    local convoId = req.body and req.body.convoId
-    local text    = req.body and req.body.text
-    local from    = claims.userId
+    local convoId  = req.body and req.body.convoId
+    local text     = req.body and req.body.text
+    -- Resolve userId to username so display names show correctly
+    local fromName = userIdToUsername(claims.userId)
 
     if not convoId or not text or #text == 0 then
         return server.badRequest(clientId, req, "missing convoId or text")
@@ -98,7 +118,7 @@ server.route("/messages/send", function(clientId, req)
 
     local msg = {
         id        = nextMsgId(),
-        from      = from,
+        from      = fromName,
         text      = text,
         timestamp = os.epoch("utc"),
         read      = false,
@@ -106,9 +126,9 @@ server.route("/messages/send", function(clientId, req)
     table.insert(convos[convoId].messages, msg)
     save("convos", convos)
 
-    -- Queue for offline recipients
+    -- Queue for offline recipients (keyed by username)
     for _, participant in ipairs(convos[convoId].participants) do
-        if participant ~= from then
+        if participant ~= fromName then
             offline[participant] = offline[participant] or {}
             table.insert(offline[participant], {
                 type    = "message",
@@ -153,26 +173,26 @@ server.route("/messages/conversations", function(clientId, req)
     local ok, claims = server.verifySession(req)
     if not ok then return server.unauthorized(clientId, req) end
 
-    local userId = claims.userId
-    local list   = {}
+    local myUsername = userIdToUsername(claims.userId)
+    local list       = {}
 
     for id, c in pairs(convos) do
         local isParticipant = false
         for _, p in ipairs(c.participants) do
-            if p == userId then isParticipant = true end
+            if p == myUsername then isParticipant = true end
         end
         if isParticipant then
             -- Count unread
             local unread = 0
             for _, m in ipairs(c.messages) do
-                if not m.read and m.from ~= userId then unread = unread + 1 end
+                if not m.read and m.from ~= myUsername then unread = unread + 1 end
             end
             local lastMsg = #c.messages > 0 and c.messages[#c.messages] or nil
             table.insert(list, {
                 id      = c.id,
                 name    = (function()
                     for _, p in ipairs(c.participants) do
-                        if p ~= userId then return p end
+                        if p ~= myUsername then return p end
                     end
                     return c.name
                 end)(),
@@ -193,9 +213,9 @@ server.route("/messages/poll", function(clientId, req)
     local ok, claims = server.verifySession(req)
     if not ok then return server.unauthorized(clientId, req) end
 
-    local userId = claims.userId
-    local pending = offline[userId] or {}
-    offline[userId] = {}
+    local myUsername = userIdToUsername(claims.userId)
+    local pending    = offline[myUsername] or {}
+    offline[myUsername] = {}
     save("offline", offline)
 
     server.ok(clientId, req, { pending = pending, count = #pending })

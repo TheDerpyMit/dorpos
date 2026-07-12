@@ -298,6 +298,8 @@ local function stepAccount()
     header("Create Account", 4, 9)
     ui.write(2, 8, "Creating account...", t.textMuted, t.bg)
 
+    -- Normalise username to match server's case-insensitive handling
+    username = username:lower()
     local passHash = sha.hash(pass1)
     local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/create", {
         username = username,
@@ -309,7 +311,10 @@ local function stepAccount()
         if resp.body.token then
             net.saveSession(resp.body.token)
         end
-        state.set("username", username)
+        -- Use the canonical username returned by the server
+        local savedName = (resp.body.username and #resp.body.username > 0)
+                          and resp.body.username or username
+        state.set("username", savedName)
         state.save()
         ui.write(2, 10, "\4 Account created!", t.success, t.bg)
         os.sleep(1)

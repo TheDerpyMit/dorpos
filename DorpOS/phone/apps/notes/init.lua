@@ -36,6 +36,8 @@ local function runEditor(note)
     local kbHits  = nil
     local bodyScroll = 0
     local bodyLines  = {}
+    local shouldExit = false
+    local saveResult = nil
 
     local function rebuildLines()
         bodyLines = {}
@@ -47,20 +49,22 @@ local function runEditor(note)
 
     rebuildLines()
 
+    local kbY = H - 7  -- keyboard starts here, so content ends at kbY-1
+
     local function redraw()
         ui.clear()
-        -- Header
+        -- Header row: [< Back]   Note Editor   [Save]
         term.setCursorPos(1, 1)
         term.setBackgroundColor(t.accent)
         term.setTextColor(t.textOnAccent)
-        term.write(utils.padRight(" Note Editor   [Save]", W))
+        term.write(utils.padRight(" [< Back]   Note Editor   [Save]", W))
         -- Title field
         ui.write(2, 2, "Title:", t.textMuted, t.bg)
         ui.textbox({ x = 2, y = 3, width = W - 3, value = title,
                      focused = (focused == "title"), placeholder = "Note title" })
         ui.divider(4)
-        -- Body area
-        local bodyH = H - 4 - 7
+        -- Body area (rows 5 to kbY-2)
+        local bodyH = kbY - 5
         local visLines = {}
         for i = bodyScroll + 1, math.min(bodyScroll + bodyH, #bodyLines) do
             table.insert(visLines, bodyLines[i])
@@ -71,9 +75,9 @@ local function runEditor(note)
             term.setTextColor(t.text)
             term.write(utils.padRight(line, W - 3))
         end
-        -- Keyboard
+        -- Keyboard (occupies kbY to H)
         kbHits = kbComp.draw({
-            y = H - 6, shifted = shifted,
+            y = kbY, shifted = shifted,
             onChar  = function(c)
                 if focused == "title" then
                     title = title .. c
@@ -93,7 +97,11 @@ local function runEditor(note)
                 else body = body .. "\n"; rebuildLines() end
             end,
             onShift = function() shifted = not shifted end,
-            onClose = function() end,
+            onClose = function()
+                -- Cancel / back out of editor without saving
+                shouldExit = true
+                saveResult = nil
+            end,
         })
     end
 
@@ -103,9 +111,15 @@ local function runEditor(note)
         local ev = { os.pullEvent() }
         local name = ev[1]
 
+        if shouldExit then return saveResult end
+
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            -- Save button
+            -- Back button (left side of header)
+            if my == 1 and mx <= 9 then
+                return nil  -- cancel, don't save
+            end
+            -- Save button (right side of header)
             if my == 1 and mx >= W - 5 then
                 note.title    = title
                 note.body     = body
@@ -114,8 +128,9 @@ local function runEditor(note)
             end
             -- Field focus
             if my == 3 then focused = "title"; redraw()
-            elseif my >= 5 and my <= H - 8 then focused = "body"; redraw()
+            elseif my >= 5 and my <= kbY - 2 then focused = "body"; redraw()
             elseif kbHits and kbComp.handleClick(kbHits, mx, my) then
+                if shouldExit then return saveResult end
                 rebuildLines(); redraw()
             end
         elseif name == "char" then

@@ -51,6 +51,41 @@ local function status(msg)
     term.write(msg:sub(1, W))
 end
 
+-- Smart path display: trim from the LEFT so the filename end is always visible
+-- e.g. "/system/ui/components/keyboard.lua" becomes "..ponents/keyboard.lua"
+local function pathLine(path)
+    if #path <= W then
+        -- Fits: pad with spaces so the row is clean
+        return path .. string.rep(" ", W - #path)
+    else
+        -- Trim: keep the rightmost (W-2) chars, prefix with ".."
+        return ".." .. path:sub(#path - (W - 3))
+    end
+end
+
+-- Two-row progress display used during file download
+local function progressStatus(i, total, path)
+    -- Row H-2: progress bar with counter
+    local pct   = math.floor((i / total) * 100)
+    local label = string.format("[%d/%d] %d%%", i, total, pct)
+    local barW  = W - #label - 1
+    local fill  = math.floor((i / total) * barW)
+    term.setCursorPos(1, H - 2)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.cyan)
+    term.write(label .. " ")
+    term.setBackgroundColor(colors.cyan)
+    term.write(string.rep(" ", fill))
+    term.setBackgroundColor(colors.gray)
+    term.write(string.rep(" ", barW - fill))
+
+    -- Row H-1: file path (smart-trimmed so the filename is always visible)
+    term.setCursorPos(1, H - 1)
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.lightGray)
+    term.write(pathLine(path))
+end
+
 local function die(msg)
     cls(colors.red, colors.white)
     cwrite(3, "PROVISIONING FAILED", colors.white, colors.red)
@@ -156,7 +191,7 @@ local function provision()
 
     -- Download each file
     for i, entry in ipairs(files) do
-        status(string.format("[%d/%d] %s", i, #files, entry.path))
+        progressStatus(i, #files, entry.path)
 
         -- Request file contents with up to 3 retries in case of packet loss
         local success = false
@@ -176,7 +211,7 @@ local function provision()
                 success = true
                 break
             end
-            status(string.format("Retrying: %s (Attempt %d/3)", entry.path, attempt))
+            status("Retry " .. attempt .. "/3: " .. pathLine(entry.path))
             os.sleep(0.2)
         end
 
