@@ -162,24 +162,6 @@ local function runHome()
     end
 end
 
-parallel.waitForAny(
-    function()
-        while _running do
-            -- Dispatch background services
-            runBackgroundServices()
-
-            -- Run home screen
-            runHome()
-
-            -- After home returns (shouldn't normally happen — home is the root)
-            -- Re-launch it to keep the kernel alive
-            log.warn("kernel", "Home screen exited — relaunching")
-            os.sleep(0.5)
-        end
-    end,
-    processSystemEvents
-)
-
 -- Handle dorpos_ events from other parts of the system
 -- These are co-processed in the kernel by checking the event queue
 -- before re-entering the home screen loop.
@@ -214,5 +196,23 @@ local function processSystemEvents()
         end
     end
 end
+
+parallel.waitForAny(
+    function()
+        while _running do
+            -- Dispatch background services
+            runBackgroundServices()
+
+            -- Run home screen
+            runHome()
+
+            -- After home returns (shouldn't normally happen — home is the root)
+            -- Re-launch it to keep the kernel alive
+            log.warn("kernel", "Home screen exited — relaunching")
+            os.sleep(0.5)
+        end
+    end,
+    processSystemEvents
+)
 
 log.info("kernel", "Kernel shutting down")
