@@ -75,6 +75,18 @@ local function sendMessage(convoId, text)
     return ok
 end
 
+-- Check if a username exists on the accounts server.
+-- Returns the canonical (lowercase) username or nil.
+local function lookupUser(username)
+    local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/lookup", {
+        username = username:lower()
+    })
+    if ok and resp.body and resp.body.username then
+        return resp.body.username
+    end
+    return nil
+end
+
 local function startConvo(targetUsername)
     local ok, resp = net.post(C.HOST_MESSAGES, "/messages/start", {
         with = targetUsername,
@@ -210,47 +222,92 @@ end
 -- New conversation dialog
 -- ─────────────────────────────────────────────────────────────
 
+-- Status message shown inside the new-convo screen
+local newConvoStatus = ""
+local newConvoStatusOk = true
+
 local function drawNewConvo()
     local t = Theme.get()
     ui.clear()
+    -- Header: tap anywhere on row 1 (left of centre) to go back
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
     term.write(utils.padRight(" < New Message", W))
 
-    ui.write(2, 4, "To (username):", t.textMuted, t.bg)
-    ui.textbox({ x = 2, y = 5, width = W - 3, value = newConvoTarget,
-                 focused = true, placeholder = "username" })
+    ui.write(2, 3, "To (username):", t.textMuted, t.bg)
+    ui.textbox({ x = 2, y = 4, width = W - 3, value = newConvoTarget,
+                 focused = true, placeholder = "e.g. derpymit" })
+
+    -- Status / error line
+    if newConvoStatus ~= "" then
+        local fg = newConvoStatusOk and t.success or t.danger
+        ui.write(2, 6, utils.truncate(newConvoStatus, W - 2), fg, t.bg)
+    end
 
     kbHits = kbComp.draw({
         y = H - 7, shifted = shifted,
-        onChar  = function(c) newConvoTarget = newConvoTarget .. c end,
+        onChar  = function(c) newConvoTarget = newConvoTarget .. c; newConvoStatus = "" end,
         onBack  = function()
-            if #newConvoTarget > 0 then newConvoTarget = newConvoTarget:sub(1, -2) end
+            if #newConvoTarget > 0 then
+                newConvoTarget = newConvoTarget:sub(1, -2)
+                newConvoStatus = ""
+            end
         end,
         onEnter = function()
-            if #newConvoTarget > 0 then
-                local id = startConvo(newConvoTarget)
-                if id then
-                    -- Add to convos if not exists
-                    local found = false
-                    for _, c in ipairs(convos) do if c.id == id then found = true end end
-                    if not found then
-                        table.insert(convos, { id = id, name = newConvoTarget, messages = {}, unread = 0 })
-                        msgCache.set("convos", convos); msgCache.save()
-                    end
-                    -- Switch to chat
-                    for _, c in ipairs(convos) do
-                        if c.id == id then activeConvo = c; break end
-                    end
-                    chatMessages = {}
-                    newConvoMode = false
-                    view = "chat"
+            local target = newConvoTarget:lower()
+            if #target == 0 then return end
+
+            -- Block messaging yourself
+            if target == myUsername:lower() then
+                newConvoStatus = "That's you!"
+                newConvoStatusOk = false
+                return
+            end
+
+            -- Verify the account exists first
+            newConvoStatus = "Checking..."
+            newConvoStatusOk = true
+
+            local canonical = lookupUser(target)
+            if not canonical then
+                newConvoStatus = "User '" .. target .. "' not found!"
+                newConvoStatusOk = false
+                return
+            end
+
+            -- Account confirmed — open (or reuse) the conversation
+            local id = startConvo(canonical)
+            if id then
+                local found = false
+                for _, c in ipairs(convos) do if c.id == id then found = true end end
+                if not found then
+                    table.insert(convos, { id = id, name = canonical, messages = {}, unread = 0 })
+                    msgCache.set("convos", convos); msgCache.save()
                 end
+                for _, c in ipairs(convos) do
+                    if c.id == id then activeConvo = c; break end
+                end
+                -- Also refresh from server so the convo object is current
+                fetchConvos()
+                for _, c in ipairs(convos) do
+                    if c.id == id then activeConvo = c; break end
+                end
+                chatMessages = fetchMessages(id) or {}
+                newConvoMode   = false
+                newConvoStatus = ""
+                view = "chat"
+            else
+                newConvoStatus = "Could not start chat."
+                newConvoStatusOk = false
             end
         end,
         onShift = function() shifted = not shifted end,
-        onClose = function() newConvoMode = false; view = "list" end,
+        onClose = function()
+            newConvoMode   = false
+            newConvoStatus = ""
+            view = "list"
+        end,
     })
 end
 
@@ -339,17 +396,34 @@ while true do
     elseif view == "newconvo" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if kbHits then kbComp.handleClick(kbHits, mx, my) end
-            drawNewConvo()
+            -- Tap header row = back to list
+            if my == 1 then
+                newConvoMode   = false
+                newConvoStatus = ""
+                view = "list"
+            elseif kbHits then
+                kbComp.handleClick(kbHits, mx, my)
+            end
+            -- Only redraw if we're still in newconvo (close/back changes view)
+            if view == "newconvo" then drawNewConvo() end
         elseif name == "char" then
-            newConvoTarget = newConvoTarget .. ev[2]; drawNewConvo()
+            newConvoTarget = newConvoTarget .. ev[2]
+            newConvoStatus = ""
+            if view == "newconvo" then drawNewConvo() end
         elseif name == "key" then
             if ev[2] == keys.backspace and #newConvoTarget > 0 then
-                newConvoTarget = newConvoTarget:sub(1, -2); drawNewConvo()
+                newConvoTarget = newConvoTarget:sub(1, -2)
+                newConvoStatus = ""
+                if view == "newconvo" then drawNewConvo() end
             end
         end
 
-        if view == "chat" then drawChat()
-        elseif view == "list" then _hits = drawList() end
+        -- Handle view transitions triggered by keyboard callbacks
+        if view == "chat" then
+            chatScroll = 0
+            drawChat()
+        elseif view == "list" then
+            _hits = drawList()
+        end
     end
 end
