@@ -118,7 +118,27 @@ end
 ---@return number|nil computerId
 function proto.lookup(hostname)
     assert(_initialized, "Call proto.init() first")
-    return rednet.lookup(C.PROTOCOL_NAME, hostname)
+    local id = rednet.lookup(C.PROTOCOL_NAME, hostname)
+    if id then return id end
+
+    -- Fallback: try other service hostnames to find the All-in-One server computer ID
+    local hosts = {
+        C.HOST_CLOUD,
+        C.HOST_UPDATES,
+        C.HOST_MARKETPLACE,
+        C.HOST_NOTIFICATIONS,
+        C.HOST_MESSAGES,
+        C.HOST_ACCOUNTS,
+        C.HOST_ACTIVATION,
+        C.HOST_PROVISIONING
+    }
+    for _, h in ipairs(hosts) do
+        if h ~= hostname then
+            id = rednet.lookup(C.PROTOCOL_NAME, h)
+            if id then return id end
+        end
+    end
+    return nil
 end
 
 -- ─────────────────────────────────────────────────────────────
