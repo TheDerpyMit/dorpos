@@ -81,126 +81,32 @@ end
 local STEPS = math.ceil(C.ANIM_TRANSITION_TIME * C.ANIM_FPS)
 
 --- Slide the new screen in from the right, pushing old screen left.
----@param drawOld function
----@param drawNew function
----@param bg      number?  Background colour (default black)
 function anim.slideLeft(drawOld, drawNew, bg)
-    bg = bg or colors.black
-    for i = 1, STEPS do
-        local t      = ease.easeOut(i / STEPS)
-        local offset = math.floor(W * (1 - t))
-
-        -- Old screen: slide out to the left
-        local oldWin = window.create(term.current(), 1 - math.floor(W * t), 1, W, H)
-        local saved  = term.redirect(oldWin)
-        drawOld()
-        term.redirect(saved)
-
-        -- New screen: slide in from the right
-        local newWin = window.create(term.current(), 1 + offset, 1, W, H)
-        saved = term.redirect(newWin)
-        drawNew()
-        term.redirect(saved)
-
-        os.sleep(FRAME_DELAY)
-    end
-    -- Final render: full new screen
     drawNew()
 end
 
 --- Slide new screen in from the left.
 function anim.slideRight(drawOld, drawNew, bg)
-    bg = bg or colors.black
-    for i = 1, STEPS do
-        local t      = ease.easeOut(i / STEPS)
-        local offset = math.floor(W * (1 - t))
-
-        local oldWin = window.create(term.current(), 1 + math.floor(W * t), 1, W, H)
-        local saved  = term.redirect(oldWin)
-        drawOld()
-        term.redirect(saved)
-
-        local newWin = window.create(term.current(), 1 - offset, 1, W, H)
-        saved = term.redirect(newWin)
-        drawNew()
-        term.redirect(saved)
-
-        os.sleep(FRAME_DELAY)
-    end
     drawNew()
 end
 
 --- Slide new screen up from the bottom.
 function anim.slideUp(drawNew, bg)
-    bg = bg or colors.black
-    for i = 1, STEPS do
-        local t      = ease.easeOut(i / STEPS)
-        local offset = math.floor(H * (1 - t))
-        local win    = window.create(term.current(), 1, 1 + offset, W, H)
-        local saved  = term.redirect(win)
-        drawNew()
-        term.redirect(saved)
-        os.sleep(FRAME_DELAY)
-    end
     drawNew()
 end
 
 --- Slide screen down (dismiss animation).
 function anim.slideDown(drawOld, bg)
-    bg = bg or colors.black
-    for i = 1, STEPS do
-        local t      = ease.easeOut(i / STEPS)
-        local offset = math.floor(H * t)
-        local win    = window.create(term.current(), 1, 1 + offset, W, H)
-        local saved  = term.redirect(win)
-        drawOld()
-        term.redirect(saved)
-        blank(bg)
-        os.sleep(FRAME_DELAY)
-    end
     blank(bg)
 end
 
---- Fade: simulate by toggling between bg and content in a blink cycle.
---- CC:T has no true alpha, so we approximate with paint-over timing.
----@param drawFn function
----@param fadeIn boolean  true=fade in, false=fade out
----@param bg     number?
+--- Fade: perform instantly to prevent flickering in the CC:T terminal
 function anim.fade(drawFn, fadeIn, bg)
-    bg = bg or colors.black
-    local frames = STEPS
-    for i = 1, frames do
-        local t = i / frames
-        if not fadeIn then t = 1 - t end
-        -- Approximate: at low t show mostly bg; at high t show full content
-        if t > 0.5 or (fadeIn and i == frames) then
-            drawFn()
-        else
-            blank(bg)
-        end
-        os.sleep(FRAME_DELAY)
-    end
     if fadeIn then drawFn() else blank(bg) end
 end
 
---- Pop-in animation: draw a centred box growing from small to full size.
----@param drawFn function  Must draw within the given sub-window
----@param bg     number?
+--- Pop-in animation: perform instantly to prevent flickering
 function anim.popIn(drawFn, bg)
-    bg = bg or colors.black
-    for i = 1, STEPS do
-        local t = ease.easeOut(i / STEPS)
-        local w = math.max(1, math.floor(W * t))
-        local h = math.max(1, math.floor(H * t))
-        local x = math.floor((W - w) / 2) + 1
-        local y = math.floor((H - h) / 2) + 1
-        blank(bg)
-        local win   = window.create(term.current(), x, y, w, h)
-        local saved = term.redirect(win)
-        pcall(drawFn)
-        term.redirect(saved)
-        os.sleep(FRAME_DELAY)
-    end
     drawFn()
 end
 
