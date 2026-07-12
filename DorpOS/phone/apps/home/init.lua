@@ -108,22 +108,72 @@ local function drawStatusBar()
     term.write(right)
 end
 
+local APP_ICONS = {
+    [C.APP_MESSAGES] = {
+        "  /--\\  ",
+        "  \\--V  "
+    },
+    [C.APP_MARKETPLACE] = {
+        "  _$_   ",
+        "  \\-/   "
+    },
+    [C.APP_SETTINGS] = {
+        "  /-\\   ",
+        "  \\-/   "
+    },
+    [C.APP_CALCULATOR] = {
+        "  [+-]  ",
+        "  [*/]  "
+    },
+    [C.APP_CONTACTS] = {
+        "  ( )   ",
+        "  /-\\   "
+    },
+    [C.APP_NOTES] = {
+        "  ___   ",
+        " |___|  "
+    },
+    [C.APP_FILES] = {
+        "  /~\\   ",
+        " |___|  "
+    },
+    [C.APP_CLOCK] = {
+        "  /-\\   ",
+        "  \\o/   "
+    },
+    [C.APP_CALENDAR] = {
+        " [===]  ",
+        " | 31|  "
+    },
+    [C.APP_ABOUT] = {
+        "  (i)   ",
+        "   |    "
+    },
+    [C.APP_CLOUD] = {
+        "  (~)   ",
+        " (___)  "
+    }
+}
+
 local function drawAppIcon(app, x, y, selected)
     local t  = Theme.get()
     local bg = selected and t.accent or t.iconBg
     local fg = selected and t.textOnAccent or t.iconText
 
-    -- Icon background square
+    local lines = APP_ICONS[app.id] or {
+        "  [" .. (app.icon or "?") .. "]   ",
+        "  [" .. (app.icon or "?") .. "]   "
+    }
+
+    -- Row 1: Icon line 1
     term.setCursorPos(x, y)
     term.setBackgroundColor(bg)
     term.setTextColor(fg)
-    -- Row 1: padding
-    term.write(string.rep(" ", ICON_W))
-    -- Row 2: centred icon char
+    term.write(utils.centre(lines[1], ICON_W))
+
+    -- Row 2: Icon line 2
     term.setCursorPos(x, y + 1)
-    local icon  = app.icon or "?"
-    local pad   = math.floor((ICON_W - 1) / 2)
-    term.write(string.rep(" ", pad) .. icon .. string.rep(" ", ICON_W - pad - 1))
+    term.write(utils.centre(lines[2], ICON_W))
 
     -- Label below (in background colour)
     term.setCursorPos(x, y + 2)
