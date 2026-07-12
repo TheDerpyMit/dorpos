@@ -145,10 +145,16 @@ function sha256.hash(msg)
     local H = {}
     for i = 1, 8 do H[i] = H0[i] end
 
+    local chunkCount = 0
     for i = 1, #words, 16 do
         local chunk = {}
         for j = 0, 15 do chunk[j+1] = words[i+j] end
         compress(H, chunk)
+        chunkCount = chunkCount + 1
+        if chunkCount % 4 == 0 then
+            if _G.sleep then _G.sleep(0)
+            elseif _G.os and _G.os.sleep then _G.os.sleep(0) end
+        end
     end
 
     local digest = ""
