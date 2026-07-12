@@ -50,11 +50,42 @@ local function drawAbout()
     ui.write(2, H - 2, "Made for ComputerCraft:T", t.textMuted, t.bg)
     ui.write(2, H - 1, "DorpOS " .. C.OS_VERSION, t.accent, t.bg)
     ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = W - 7, y = H, width = 7, label = "Root", style = "danger" })
 end
 
 drawAbout()
 
 while true do
     local _, _, mx, my = os.pullEvent("mouse_click")
-    if my == H and mx <= 6 then return end
+    if my == H and mx <= 6 then
+        return
+    elseif my == H and mx >= W - 7 then
+        local res = ui.dialog({
+            title = "Root Device?",
+            message = "Void warranty? Phone will no longer be supported.",
+            buttons = {
+                { label = "Cancel", style = "ghost", value = false },
+                { label = "Root", style = "danger", value = true }
+            }
+        })
+        if res then
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.red)
+            term.clear()
+            term.setCursorPos(1, math.floor(H / 2))
+            term.write(utils.centre("ROOTING DEVICE...", W))
+            term.setCursorPos(1, math.floor(H / 2) + 2)
+            term.setTextColor(colors.lightGray)
+            term.write(utils.centre("Warranty Voided.", W))
+            os.sleep(1.5)
+            term.setBackgroundColor(colors.black)
+            term.setTextColor(colors.white)
+            term.clear()
+            term.setCursorPos(1, 1)
+            os.queueEvent("dorpos_shutdown")
+            return
+        else
+            drawAbout()
+        end
+    end
 end
