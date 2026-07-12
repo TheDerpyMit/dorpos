@@ -325,8 +325,19 @@ local function sectionUpdate()
                 -- 3. Wipe phone
                 if fs.exists("/boot.lua") then fs.delete("/boot.lua") end
                 if fs.exists("/data") then
-                    for _, f in ipairs(fs.list("/data")) do
-                        fs.delete("/data/" .. f)
+                    -- Delete phone-specific config files, but preserve server data
+                    -- in case the phone and server are running on the same computer
+                    local phoneFiles = {
+                        "user_config.dat", "session.dat", "setup_wizard.dat",
+                        "notifications.dat", "pin.dat", "messages.dat",
+                        "contacts.dat", "marketplace.dat", "theme.json", "user.json"
+                    }
+                    for _, f in ipairs(phoneFiles) do
+                        if fs.exists("/data/" .. f) then fs.delete("/data/" .. f) end
+                    end
+                    local phoneDirs = { "config", "cache", "user", "logs", "downloads" }
+                    for _, d in ipairs(phoneDirs) do
+                        if fs.exists("/data/" .. d) then fs.delete("/data/" .. d) end
                     end
                 end
 
