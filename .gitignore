@@ -1,0 +1,10 @@
+# Ignore local CC data folders and databases
+**/data/
+**/*.tmp
+**/*.log
+**/.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+bin/
+obj/
