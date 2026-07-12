@@ -141,7 +141,7 @@ local function drawBrowser(items)
         table.insert(_hits, { y = ry, idx = i })
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     if selIdx > 1 then
         local sel = items[selIdx]
         if sel and not sel.isDir then
@@ -163,7 +163,7 @@ local function run()
             local mx, my = ev[3], ev[4]
 
             if my == H then
-                if mx <= 6 then return end
+                if mx <= 3 then return end
                 if mx >= W - 7 and selIdx > 1 then
                     local sel = items[selIdx]
                     if sel and not sel.isDir then

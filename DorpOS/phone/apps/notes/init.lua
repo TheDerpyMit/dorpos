@@ -194,7 +194,7 @@ local function drawList()
     end
 
     -- Back
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     return _hits
 end
 
@@ -220,7 +220,7 @@ local function run()
                     end
                     _hits = drawList()
                 end
-            elseif my == H and mx <= 6 then
+            elseif my == H and mx <= 3 then
                 return  -- back to home
             elseif my == 2 then
                 -- Search focus handled via char events below

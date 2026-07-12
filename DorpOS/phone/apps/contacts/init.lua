@@ -169,7 +169,7 @@ local function drawList()
         ui.write(2, 6, "No contacts.", t.textMuted, t.bg)
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     return _hits, list
 end
 
@@ -181,7 +181,7 @@ while true do
 
     if name == "mouse_click" then
         local mx, my = ev[3], ev[4]
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         if my == 1 then
             if mx >= W - 9 and mx <= W - 4 then
                 -- Sync

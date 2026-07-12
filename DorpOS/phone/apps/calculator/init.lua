@@ -100,7 +100,7 @@ local function draw()
     end
 
     -- Back button
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 draw()
@@ -113,7 +113,7 @@ while true do
         local mx, my = ev[3], ev[4]
 
         -- Back
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
 
         for _, h in ipairs(_hits) do
             if mx >= h.x1 and mx <= h.x2 and my == h.y1 then

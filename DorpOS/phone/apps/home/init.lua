@@ -71,6 +71,12 @@ local function getLaunchableApps()
             table.insert(out, app)
         end
     end
+    -- Add the App Drawer entry directly to the desktop grid!
+    table.insert(out, {
+        id = "drawer",
+        name = "Apps",
+        icon = "::"
+    })
     return out
 end
 
@@ -152,6 +158,10 @@ local APP_ICONS = {
     [C.APP_CLOUD] = {
         "  (~)   ",
         " (___)  "
+    },
+    ["drawer"] = {
+        "  ::    ",
+        "  ::    "
     }
 }
 
@@ -230,9 +240,9 @@ local function drawHome(apps)
 
     drawStatusBar()
 
-    -- Fill background
+    -- Fill background (clears full screen down to bottom row H)
     term.setBackgroundColor(t.bg)
-    for row = CONTENT_Y, H - 1 do
+    for row = CONTENT_Y, H do
         term.setCursorPos(1, row)
         term.write(string.rep(" ", W))
     end
@@ -261,46 +271,21 @@ local function drawHome(apps)
                     x1 = ix, x2 = ix + ICON_W - 1,
                     y1 = iy, y2 = iy + ICON_H - 1,
                     action = function()
-                        os.queueEvent("dorpos_launch_app", appId)
+                        if appId == "drawer" then
+                            showDrawer = true
+                        else
+                            os.queueEvent("dorpos_launch_app", appId)
+                        end
                     end,
                 })
             end
         end
     end
 
-    -- Page dots
+    -- Page dots (only draw if there is more than 1 page)
     local dotsY = CONTENT_Y + ROWS * ICON_H + 1
-    if dotsY < DOCK_Y - 1 then
+    if totalPages > 1 and dotsY < H - 1 then
         drawPageDots(totalPages, page, dotsY)
-    end
-
-    -- Dock
-    local dockInfos = {}
-    for _, id in ipairs(DOCK) do
-        if id == "drawer" then
-            table.insert(dockInfos, "drawer")
-        else
-            table.insert(dockInfos, appMgr.getInfo(id))
-        end
-    end
-    drawDock(dockInfos)
-
-    -- Dock hit areas
-    local dw = math.floor(W / #DOCK)
-    for i, id in ipairs(DOCK) do
-        local dx1 = 1 + (i - 1) * dw
-        local dx2 = dx1 + dw - 1
-        local launchId = id
-        table.insert(_hitAreas, {
-            x1 = dx1, x2 = dx2, y1 = DOCK_Y, y2 = DOCK_Y,
-            action = function()
-                if launchId == "drawer" then
-                    showDrawer = true
-                else
-                    os.queueEvent("dorpos_launch_app", launchId)
-                end
-            end,
-        })
     end
 
     -- Status bar hit (pull down = notification centre)

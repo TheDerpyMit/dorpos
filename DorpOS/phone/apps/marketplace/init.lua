@@ -138,7 +138,7 @@ local function drawBrowse()
         end
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     ui.button({ x = 8, y = H, width = 8, label = "My List", style = "ghost" })
     ui.button({ x = W - 8, y = H, width = 8, label = "Refresh", style = "ghost" })
     return _hits
@@ -170,7 +170,7 @@ local function drawDetail(lst)
     ui.write(2, wy, "Wants in return:", t.textMuted, t.bg)
     ui.write(2, wy + 1, lst.wantedFor or "?", t.accent, t.bg)
 
-    ui.button({ x = 1, y = H - 1, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H - 1, width = 3, label = "<", style = "ghost" })
     if lst.seller ~= myUsername then
         ui.button({ x = 9, y = H - 1, width = 14, label = "Contact Seller" })
     else
@@ -251,7 +251,7 @@ local function drawMine()
         end
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     return _hits
 end
 
@@ -269,7 +269,7 @@ while true do
     if view == "browse" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if my == H and mx <= 6 then return end
+            if my == H and mx <= 3 then return end
             if my == H and mx >= 8 and mx <= 15 then
                 view = "mine"; fetchMyListings()
                 _hits = drawMine()
@@ -307,7 +307,7 @@ while true do
     elseif view == "detail" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if my == H - 1 and mx <= 6 then
+            if my == H - 1 and mx <= 3 then
                 view = "browse"; _hits = drawBrowse()
             elseif my == H - 1 and mx >= 9 then
                 if selListing.seller ~= myUsername then
@@ -365,7 +365,7 @@ while true do
     elseif view == "mine" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if my == H and mx <= 6 then
+            if my == H and mx <= 3 then
                 view = "browse"; _hits = drawBrowse()
             end
         end

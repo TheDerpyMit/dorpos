@@ -146,7 +146,7 @@ local function redraw()
     elseif tab == TAB_STOP then drawStopwatch()
     elseif tab == TAB_TIMER then drawTimer() end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 -- Periodic tick timer
@@ -161,7 +161,7 @@ while true do
     if name == "mouse_click" then
         local mx, my = ev[3], ev[4]
 
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
 
         -- Tab bar
         if my == 2 then

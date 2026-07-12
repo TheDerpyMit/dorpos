@@ -136,7 +136,7 @@ local function drawCalendar()
         end
     end
 
-    ui.button({ x = 1,     y = H, width = 6, label = "< Back",  style = "ghost" })
+    ui.button({ x = 1,     y = H, width = 3, label = "<",  style = "ghost" })
     ui.button({ x = W - 7, y = H, width = 7, label = "[+] Add"  })
     return _hits
 end
@@ -212,7 +212,7 @@ while true do
     local ev = { os.pullEvent() }
     if ev[1] == "mouse_click" then
         local mx, my = ev[3], ev[4]
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         if my == H and mx >= W - 7 then addEventDialog(); _hits = drawCalendar() end
         -- Month navigation (< >) in header
         if my == 1 then

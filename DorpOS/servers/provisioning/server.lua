@@ -125,6 +125,9 @@ while true do
     if not clientId then goto continue end
 
     local ep = req.endpoint
+    if not ep or ep:sub(1, 11) ~= "/provision/" then
+        goto continue
+    end
 
     -- ── /provision/hello — new device discovery ──────────────
     if ep == "/provision/hello" then

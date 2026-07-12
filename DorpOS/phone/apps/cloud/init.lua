@@ -59,7 +59,7 @@ local function draw()
         ui.write(2, 4 + #SYNC_STORES + 7, status, t.info, t.bg)
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 draw()
@@ -67,7 +67,7 @@ draw()
 while true do
     local _, _, mx, my = os.pullEvent("mouse_click")
     local baseY = 4 + #SYNC_STORES + 3
-    if my == H and mx <= 6 then return end
+    if my == H and mx <= 3 then return end
     if my == baseY then
         status = "Backing up..."
         draw()

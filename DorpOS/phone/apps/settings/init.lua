@@ -51,7 +51,7 @@ local function drawMenu()
         table.insert(_hits, { y = ry, id = sec.id })
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     return _hits
 end
 
@@ -73,7 +73,7 @@ local function sectionProfile()
     ui.write(2, 11, C.OS_VERSION, t.accent, t.bg)
 
     ui.button({ x = 2, y = 14, width = 14, label = "Logout", style = "danger" })
-    ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
@@ -84,7 +84,7 @@ local function sectionProfile()
                          buttons = {{ label = "OK", value = true }}})
             return
         end
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
     end
 end
 
@@ -112,13 +112,13 @@ local function sectionAppearance()
             term.setTextColor(fg)
             term.write(utils.padRight((isSel and "> " or "  ") .. th.name, W - 2))
         end
-        ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+        ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     end
 
     redraw()
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         for i = 1, #themes do
             if my == 4 + i then
                 sel = i
@@ -140,11 +140,11 @@ local function sectionSecurity()
 
     ui.write(2, 4, "Change PIN:", t.text, t.bg)
     ui.button({ x = 2, y = 5, width = 12, label = "Change PIN" })
-    ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         if my == 5 and mx >= 2 and mx <= 13 then
             -- Rerun PIN setup
             dofile("/system/setup/wizard.lua")  -- or a standalone PIN change flow
@@ -168,11 +168,11 @@ local function sectionNetwork()
     ui.write(2, 8, "Version: " .. C.PROTOCOL_VERSION, t.textMuted, t.bg)
 
     ui.button({ x = 2, y = 11, width = 12, label = "Test Conn." })
-    ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         if my == 11 then
             local ok = net.isOnline()
             ui.toast({ text = ok and "Connected!" or "Offline.", type = ok and "success" or "error", y = H - 1 })
@@ -198,13 +198,13 @@ local function sectionNotifs()
         ui.switch({ x = 2, y = 5, value = dnd, label = "DND Mode" })
         ui.write(2, 7, "Unread: " .. notif.unreadCount(), t.textMuted, t.bg)
         ui.button({ x = 2, y = 9, width = 14, label = "Clear All", style = "danger" })
-        ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+        ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     end
 
     redraw()
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
         if my == 5 and mx >= 2 and mx <= 6 then
             notif.setDND(not dnd); redraw()
         end
@@ -248,10 +248,10 @@ local function sectionStorage()
         ui.write(14, 3 + i, utils.padLeft(math.floor(sz / 1024) .. "KB", 6), t.text, t.bg)
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "< Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     while true do
         local _, _, mx, my = os.pullEvent("mouse_click")
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
     end
 end
 
@@ -265,7 +265,7 @@ while true do
     local ev = { os.pullEvent() }
     if ev[1] == "mouse_click" then
         local mx, my = ev[3], ev[4]
-        if my == H and mx <= 6 then return end
+        if my == H and mx <= 3 then return end
 
         for _, h in ipairs(_hits) do
             if my == h.y then

@@ -122,7 +122,7 @@ local function drawList()
         end
     end
 
-    ui.button({ x = 1, y = H, width = 6, label = "Back", style = "ghost" })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
     ui.button({ x = 9, y = H, width = 8, label = "Refresh", style = "ghost" })
     return _hits
 end
@@ -265,7 +265,7 @@ while true do
     if view == "list" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if my == H and mx <= 6 then return end
+            if my == H and mx <= 3 then return end
             if my == H and mx >= 9 and mx <= 16 then
                 fetchConvos(); _hits = drawList()
             end
