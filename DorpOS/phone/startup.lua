@@ -126,18 +126,25 @@ end
 
 local function provision()
     splash()
-    status("Searching for Provisioning Server...")
+    -- Discovery (retry up to 5 times to handle packet loss or server booting)
+    local serverId, manifest
+    local retries = 5
+    for attempt = 1, retries do
+        status(string.format("Searching for Server... (Attempt %d/%d)", attempt, retries))
+        sendBroadcast({
+            protocol = PROTO,
+            version  = 1,
+            id       = tostring(os.getComputerID()) .. tostring(os.epoch("utc")) .. "-" .. attempt,
+            endpoint = "/provision/hello",
+            body     = { deviceId = os.getComputerID(), version = "0.0.0" },
+        })
+        serverId, manifest = waitResponse(3) -- Wait 3 seconds per attempt
+        if serverId and manifest and manifest.ok then
+            break
+        end
+        os.sleep(0.5)
+    end
 
-    -- Discovery
-    sendBroadcast({
-        protocol = PROTO,
-        version  = 1,
-        id       = tostring(os.getComputerID()) .. tostring(os.epoch("utc")),
-        endpoint = "/provision/hello",
-        body     = { deviceId = os.getComputerID(), version = "0.0.0" },
-    })
-
-    local serverId, manifest = waitResponse(TIMEOUT)
     if not serverId then die("No Provisioning Server found.\nIs the server running?") end
     if not manifest.ok then die(manifest.message or "Provisioning rejected") end
 
@@ -151,17 +158,29 @@ local function provision()
     for i, entry in ipairs(files) do
         status(string.format("[%d/%d] %s", i, #files, entry.path))
 
-        -- Request file contents
-        rednet.send(serverId, {
-            protocol = PROTO,
-            version  = 1,
-            id       = tostring(i) .. "-" .. tostring(os.epoch("utc")),
-            endpoint = "/provision/file",
-            body     = { path = entry.path, hash = entry.hash },
-        }, PROTO)
+        -- Request file contents with up to 3 retries in case of packet loss
+        local success = false
+        local resp
+        for attempt = 1, 3 do
+            rednet.send(serverId, {
+                protocol = PROTO,
+                version  = 1,
+                id       = tostring(i) .. "-" .. tostring(os.epoch("utc")) .. "-" .. attempt,
+                endpoint = "/provision/file",
+                body     = { path = entry.path, hash = entry.hash },
+            }, PROTO)
 
-        local _, resp = waitResponse(TIMEOUT)
-        if not resp or not resp.ok then
+            local _
+            _, resp = waitResponse(4)
+            if resp and resp.ok then
+                success = true
+                break
+            end
+            status(string.format("Retrying: %s (Attempt %d/3)", entry.path, attempt))
+            os.sleep(0.2)
+        end
+
+        if not success then
             die("Failed to download: " .. entry.path)
         end
 
