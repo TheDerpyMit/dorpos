@@ -91,11 +91,15 @@ if choice == 1 or choice == 7 or choice == 9 then
                 fs.delete("/phone_files")
             end
             fs.copy("/phone", "/phone_files")
+            if fs.exists("/shared") then
+                fs.copy("/shared", "/phone_files/shared")
+            end
             print("Copied files to /phone_files")
         end
     else
-        print("Note: Plase copy your phone OS source files to '/phone_files'")
+        print("Note: Please copy your phone OS source files to '/phone_files'")
         print("      on this computer so it can serve installation / updates.")
+        print("      Make sure to also copy '/shared' to '/phone_files/shared'.")
         if not fs.exists("/phone_files") then
             fs.makeDir("/phone_files")
         end
