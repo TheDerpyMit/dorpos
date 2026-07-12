@@ -65,6 +65,7 @@ local function scanDir(root, prefix, out)
             if h then
                 table.insert(out, { path = "/" .. relPath, hash = h, size = fs.getSize(full) })
             end
+            sleep(0) -- Yield to prevent "Too long without yielding" crash
         end
     end
     return out

@@ -34,6 +34,7 @@ local function getManifest()
                 if content then
                     table.insert(files, { path = "/" .. rel, hash = sha.hash(content), size = fs.getSize(full) })
                 end
+                sleep(0) -- Yield to prevent "Too long without yielding" crash
             end
         end
     end
