@@ -50,11 +50,6 @@ if not package then
         error("Module '" .. modname .. "' not found.", 2)
     end
 else
-    -- If package exists, make sure our lookup folders are in the search path
-    local paths = { "/?.lua", "/?/init.lua", "/shared/?.lua", "/system/?.lua", "/servers/?.lua" }
-    for _, p in ipairs(paths) do
-        if not package.path:find(p, 1, true) then
-            package.path = p .. ";" .. package.path
-        end
-    end
+    -- If package exists, prepend our absolute lookup folders to the search path
+    package.path = "/?.lua;/?/init.lua;/shared/?.lua;/system/?.lua;/servers/?.lua;" .. (package.path or "")
 end
