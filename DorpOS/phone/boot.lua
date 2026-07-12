@@ -16,9 +16,7 @@
 
 -- ─────────────────────────────────────────────────────────────
 -- Require paths — add /system and /shared to package.path
--- ─────────────────────────────────────────────────────────────
-package.path = "/?.lua;/?/init.lua;/system/?.lua;/shared/?.lua;"
-               .. package.path
+pcall(dofile, "/shared/shim.lua")
 
 local C     = require("shared.constants")
 local log   = require("system.utils.logger")

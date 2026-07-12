@@ -5,7 +5,7 @@
     Ideal for local testing, development, and single-node servers.
 ]]
 
-package.path = "/?.lua;/?/init.lua;/shared/?.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 
 local C = require("shared.constants")
 local unpack = table.unpack or _G.unpack

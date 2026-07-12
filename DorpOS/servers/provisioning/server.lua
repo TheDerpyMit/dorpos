@@ -19,7 +19,7 @@
     request and cached. Re-generate by deleting /data/manifest.dat.
 ]]
 
-package.path = "/?.lua;/?/init.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 
 local C     = require("shared.constants")
 local proto = require("shared.protocol")

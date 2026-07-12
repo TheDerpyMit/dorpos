@@ -15,10 +15,7 @@
     this loop by registering a handler coroutine.
 ]]
 
--- ─────────────────────────────────────────────────────────────
--- Module path setup (already done in boot.lua but safe to repeat)
--- ─────────────────────────────────────────────────────────────
-package.path = "/?.lua;/?/init.lua;/system/?.lua;/shared/?.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 
 local C       = require("shared.constants")
 local log     = require("system.utils.logger")

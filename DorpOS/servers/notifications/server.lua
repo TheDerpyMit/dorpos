@@ -1,5 +1,5 @@
 --[[  DorpOS :: servers/notifications/server.lua ]]
-package.path = "/?.lua;/?/init.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")
 local server = Base.new(C.HOST_NOTIFICATIONS, "Notifications")

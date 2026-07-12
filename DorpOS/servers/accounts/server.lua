@@ -4,7 +4,7 @@
     Accounts Server — user profiles, authentication, friends, settings sync.
 ]]
 
-package.path = "/?.lua;/?/init.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")

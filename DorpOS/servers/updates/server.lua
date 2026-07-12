@@ -1,7 +1,7 @@
 --[[  DorpOS :: servers/updates/server.lua
     Update Server — serves file manifests and delta file downloads.
 ]]
-package.path = "/?.lua;/?/init.lua;" .. package.path
+pcall(dofile, "/shared/shim.lua")
 local Base = require("servers.shared.server_base")
 local C    = require("shared.constants")
 local sha  = require("system.crypto.sha256")
