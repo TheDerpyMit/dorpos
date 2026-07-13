@@ -1,57 +1,55 @@
 --[[  DorpOS :: servers/shared/monitor_dashboard.lua
-    Server Monitor Dashboard
+    Server Monitor Dashboard — live display on any attached monitor.
 
-    When a 3x3 Advanced Monitor is attached, this module renders a live
-    server dashboard on it:
+    Attach any monitor (ideally 3x3 Advanced) to the server computer.
+    The dashboard auto-detects it and renders per-server panels plus a
+    colour-coded activity log.
 
-    ┌────────────────────────────────────────────────────────────────────┐
-    │  DorpOS Server Monitor                           [uptime]          │
-    ├──────────┬──────────┬──────────┬──────────┬──────────┬────────────┤
-    │ Accounts │ Messages │ Market   │ Notifs   │ Updates  │ Cloud      │
-    │ ● Online │ ● Online │ ● Online │ ● Online │ ● Online │ ● Online   │
-    │ Reqs: 14 │ Reqs: 7  │ Reqs: 3  │ Reqs: 22 │ Reqs: 1  │ Reqs: 0    │
-    │ Errs:  0 │ Errs: 0  │ Errs: 0  │ Errs: 0  │ Errs: 0  │ Errs: 0    │
-    │ Last:    │ Last:    │ Last:    │ Last:    │ Last:    │ Last:       │
-    │/account/ │/messages/│/market/  │/notif/   │/updates/ │/cloud/     │
-    ├──────────┴──────────┴──────────┴──────────┴──────────┴────────────┤
-    │ [INFO ] Accounts  /account/login              OK 200               │
-    │ [INFO ] Messages  /messages/send              OK 200               │
-    │ [WARN ] Accounts  Handler error on /friends/  500                  │
-    │ [INFO ] Market    /market/browse              OK 200               │
-    └────────────────────────────────────────────────────────────────────┘
-
-    Usage:
-        local dash = require("servers.shared.monitor_dashboard")
-        dash.register("Accounts")
-        dash.log("Accounts", "info", "Ready and listening...")
-        dash.request("Accounts", "/account/login", 200)
-        dash.redraw()   -- call periodically or after each log entry
+    ┌ DorpOS Server Monitor ──────────────────── up 00:04:12 ┐
+    │ Accounts  │ Messages  │ Market    │ Notifs    │ ...     │
+    │ ● Online  │ ● Online  │ ● Online  │ ● Online  │         │
+    │ Reqs:  14 │ Reqs:   7 │ Reqs:   3 │ Reqs:  22 │         │
+    │ Errs:   0 │ Errs:   0 │ Errs:   0 │ Errs:   0 │         │
+    │ /account/ │ /messages │ /market/  │ /notif/   │         │
+    ├───────────┴───────────┴───────────┴───────────┴─────────┤
+    │  0001s [INFO] Accounts   /account/login             200  │
+    │  0012s [ OK ] Messages   /messages/send             200  │
+    │  0025s [WARN] Accounts   /friends/request           409  │
+    └─────────────────────────────────────────────────────────┘
 ]]
 
 local dash = {}
 
 -- ─────────────────────────────────────────────────────────────
--- Detect monitor
+-- Monitor detection
 -- ─────────────────────────────────────────────────────────────
 
-local _mon         = nil   -- the monitor peripheral
-local _monW        = 0
-local _monH        = 0
+local _mon  = nil
+local _monW = 0
+local _monH = 0
 
 local function findMonitor()
-    -- Look for any monitor peripheral
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "monitor" then
-            return peripheral.wrap(name)
+    -- peripheral.find is the most reliable way in CC:T
+    local m = peripheral.find("monitor")
+    if m then return m end
+    -- fallback: scan sides
+    for _, side in ipairs({"top","bottom","left","right","front","back"}) do
+        if peripheral.isPresent(side) and peripheral.getType(side) == "monitor" then
+            return peripheral.wrap(side)
         end
     end
     return nil
 end
 
 local function initMonitor()
-    _mon = findMonitor()
-    if not _mon then return false end
-    _mon.setTextScale(0.5)   -- smallest scale → most characters on 3x3
+    local m = findMonitor()
+    if not m then
+        _mon = nil
+        return false
+    end
+    _mon  = m
+    -- Set smallest scale for maximum resolution on 3x3
+    pcall(function() _mon.setTextScale(0.5) end)
     _monW, _monH = _mon.getSize()
     return true
 end
@@ -60,337 +58,279 @@ end
 -- State
 -- ─────────────────────────────────────────────────────────────
 
--- Ordered list of registered server names
-local _servers     = {}
--- Per-server stats: { name, status, requests, errors, lastEndpoint, lastCode }
-local _stats       = {}
--- Ring buffer of recent log lines (max 200 entries)
-local _logBuf      = {}
-local LOG_BUF_MAX  = 200
--- Boot time
-local _bootEpoch   = os.epoch("utc")
--- Scroll offset for log panel
-local _logScroll   = 0
+local _servers   = {}  -- ordered list of registered server names
+local _stats     = {}  -- { [name] = { online, requests, errors, lastEndpoint, lastCode, lastTs } }
+local _logBuf    = {}  -- ring buffer of log entries
+local LOG_MAX    = 300
+local _boot      = os.epoch("utc")
 
--- Colour scheme
-local COL = {
-    bg       = colors.black,
-    title    = colors.cyan,
-    border   = colors.gray,
-    nameOnline = colors.lime,
-    nameOffline = colors.red,
-    stat     = colors.white,
-    statDim  = colors.lightGray,
-    logInfo  = colors.lightBlue,
-    logWarn  = colors.yellow,
-    logError = colors.red,
-    logOk    = colors.lime,
-    logMuted = colors.gray,
-    panelBg  = colors.black,
-    headerBg = colors.blue,
-    logBg    = colors.black,
-    accent   = colors.cyan,
-    rowAlt   = colors.black,
+-- expose stats for server_base peek
+dash._stats = _stats
+
+-- Colour palette
+local C = {
+    bg        = colors.black,
+    headerBg  = colors.gray,
+    headerFg  = colors.white,
+    accent    = colors.cyan,
+    panelBg   = colors.black,
+    nameBg    = colors.blue,
+    nameFg    = colors.white,
+    nameErr   = colors.red,
+    online    = colors.lime,
+    offline   = colors.red,
+    statFg    = colors.white,
+    dimFg     = colors.gray,
+    sepBg     = colors.gray,
+    logBg     = colors.black,
+    logInfo   = colors.lightBlue,
+    logOk     = colors.lime,
+    logWarn   = colors.yellow,
+    logErr    = colors.red,
+    logDim    = colors.gray,
+    logFg     = colors.white,
 }
 
 -- ─────────────────────────────────────────────────────────────
--- Public: register / log / request
+-- Public API
 -- ─────────────────────────────────────────────────────────────
 
---- Register a server so it gets a panel.
----@param name string
 function dash.register(name)
     if _stats[name] then return end
     table.insert(_servers, name)
     _stats[name] = {
-        name        = name,
-        online      = true,
-        requests    = 0,
-        errors      = 0,
-        lastEndpoint= "(waiting...)",
-        lastCode    = nil,
-        lastTs      = nil,
+        online       = true,
+        requests     = 0,
+        errors       = 0,
+        lastEndpoint = "(starting...)",
+        lastCode     = nil,
+        lastTs       = nil,
     }
 end
 
---- Add a log entry.
----@param server  string   Server name (or "All")
----@param level   string   "info"|"warn"|"error"|"ok"
----@param message string
 function dash.log(server, level, message)
-    local entry = {
+    table.insert(_logBuf, {
         ts      = os.epoch("utc"),
-        server  = server,
-        level   = level,
-        message = message,
-    }
-    table.insert(_logBuf, entry)
-    if #_logBuf > LOG_BUF_MAX then table.remove(_logBuf, 1) end
-    -- Print to terminal too
-    print(string.format("[%s] [%s] %s", server, level:upper(), message))
+        server  = server  or "?",
+        level   = level   or "info",
+        message = message or "",
+    })
+    if #_logBuf > LOG_MAX then table.remove(_logBuf, 1) end
+    -- Also print to terminal
+    print(string.format("[%s][%s] %s", server or "?", (level or "info"):upper(), message or ""))
 end
 
---- Record an incoming request (called after response is sent).
----@param server   string
----@param endpoint string
----@param code     number   HTTP-style response code
 function dash.request(server, endpoint, code)
     local s = _stats[server]
     if not s then return end
     s.requests    = s.requests + 1
-    s.lastEndpoint = endpoint
+    s.lastEndpoint = endpoint or "?"
     s.lastCode    = code
     s.lastTs      = os.epoch("utc")
-    if code and code >= 500 then
-        s.errors = s.errors + 1
-    end
+    if code and code >= 500 then s.errors = s.errors + 1 end
+
     local level = (code and code >= 500) and "error"
                   or (code and code >= 400) and "warn"
                   or "ok"
     dash.log(server, level,
-        string.format("%-22s %s %d",
-            endpoint:sub(1, 22),
-            (code and code < 300) and "OK" or "ERR",
-            code or 0))
+        string.format("%-24s %3d", (endpoint or "?"):sub(1,24), code or 0))
 end
 
---- Mark a server as crashed / offline.
----@param server string
 function dash.setOffline(server)
     if _stats[server] then
         _stats[server].online = false
-        dash.log(server, "error", "Server went offline!")
     end
+    dash.log(server, "error", "Server OFFLINE / crashed!")
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Drawing helpers (all write to _mon)
+-- Safe monitor writes (all output goes through here)
 -- ─────────────────────────────────────────────────────────────
 
-local function mset(x, y, fg, bg, text)
-    if not _mon then return end
-    _mon.setCursorPos(x, y)
-    _mon.setTextColor(fg)
-    _mon.setBackgroundColor(bg)
-    _mon.write(text)
+local function mpos(x, y)       _mon.setCursorPos(x, y)                    end
+local function mfg(col)         _mon.setTextColor(col)                     end
+local function mbg(col)         _mon.setBackgroundColor(col)               end
+local function mwrite(text)     _mon.write(text)                           end
+local function mpad(x, y, w, bg)
+    mbg(bg)
+    mpos(x, y)
+    mwrite(string.rep(" ", w))
 end
-
-local function mfill(x, y, w, bg)
-    mset(x, y, COL.stat, bg, string.rep(" ", w))
-end
-
-local function mwrite(x, y, w, fg, bg, text)
-    -- Truncate/pad to exactly w characters
+local function mtext(x, y, w, fg, bg, text)
+    mpad(x, y, w, bg)
+    mpos(x, y)
+    mfg(fg); mbg(bg)
     if #text > w then text = text:sub(1, w) end
-    mset(x, y, fg, bg, text)
-    local rem = w - #text
-    if rem > 0 then
-        _mon.setBackgroundColor(bg)
-        _mon.write(string.rep(" ", rem))
-    end
-end
-
-local function hline(y, bg)
-    mfill(1, y, _monW, bg or COL.border)
-end
-
-local function vline(x, y1, y2, bg)
-    for y = y1, y2 do
-        _mon.setCursorPos(x, y)
-        _mon.setBackgroundColor(bg or COL.border)
-        _mon.write(" ")
-    end
-end
-
-local function box(x, y, w, h, bg)
-    for row = y, y + h - 1 do
-        mfill(x, row, w, bg or COL.panelBg)
-    end
+    mwrite(text)
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Layout computation
+-- Layout
 -- ─────────────────────────────────────────────────────────────
 
-local HEADER_H   = 2    -- title bar rows
-local PANEL_ROWS = 7    -- rows per server panel
-local LOG_MIN_H  = 6    -- minimum rows for log area
-local SEPARATOR  = 1    -- 1-char wide column separator
+local PANEL_H    = 7   -- rows per server panel
+local HEADER_H   = 2   -- title + divider
+local SEP_W      = 1   -- column separator width
+local MIN_PANEL_W= 12  -- minimum panel width in chars
 
-local function layout()
-    -- How many servers? Cap at 8
-    local n = math.min(#_servers, 8)
+local function computeLayout()
+    local n = #_servers
     if n == 0 then return nil end
 
-    -- How many columns of panels? Try to fit them across the width.
-    -- Each panel needs at least 10 chars wide.
-    local MIN_PANEL_W = 10
-    local cols = math.min(n, math.floor((_monW + 1) / (MIN_PANEL_W + SEPARATOR)))
-    cols = math.max(cols, 1)
+    local cols = math.min(n, math.max(1, math.floor((_monW + SEP_W) / (MIN_PANEL_W + SEP_W))))
     local rows = math.ceil(n / cols)
-    local panelW = math.floor((_monW - (cols - 1) * SEPARATOR) / cols)
+    local panelW = math.floor((_monW - (cols-1)*SEP_W) / cols)
 
-    -- Panels occupy: HEADER_H + rows * PANEL_ROWS
-    local panelEndY = HEADER_H + rows * PANEL_ROWS
-    local logY = panelEndY + 1
+    local panelArea = HEADER_H + rows * PANEL_H
+    local logY = panelArea + 1
     local logH = _monH - logY + 1
 
     return {
-        n       = n,
-        cols    = cols,
-        rows    = rows,
-        panelW  = panelW,
-        panelEndY = panelEndY,
-        logY    = logY,
-        logH    = logH,
+        n=n, cols=cols, rows=rows,
+        panelW=panelW,
+        panelArea=panelArea,
+        logY=logY, logH=logH,
     }
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Main draw
+-- Draw routines
 -- ─────────────────────────────────────────────────────────────
 
-local function drawHeader(L)
-    -- Title bar
-    mfill(1, 1, _monW, COL.headerBg)
-    local title = " DorpOS Server Monitor"
-    mset(1, 1, COL.title, COL.headerBg, title)
-
+local function drawHeader()
+    -- Row 1: title
+    mpad(1, 1, _monW, C.headerBg)
+    mtext(1, 1, 22, C.accent, C.headerBg, " DorpOS Server Monitor")
     -- Uptime
-    local upSec = math.floor((os.epoch("utc") - _bootEpoch) / 1000)
-    local upH = math.floor(upSec / 3600)
-    local upM = math.floor((upSec % 3600) / 60)
-    local upS = upSec % 60
-    local upStr = string.format("up %02d:%02d:%02d", upH, upM, upS)
-    mset(_monW - #upStr, 1, COL.statDim, COL.headerBg, upStr)
-
-    -- Divider row
-    mfill(1, 2, _monW, COL.border)
-    mset(1, 2, COL.accent, COL.border,
-        string.rep(" ", _monW))
+    local sec  = math.floor((os.epoch("utc") - _boot) / 1000)
+    local up   = string.format("up %02d:%02d:%02d", math.floor(sec/3600), math.floor(sec%3600/60), sec%60)
+    mtext(_monW - #up, 1, #up, C.dimFg, C.headerBg, up)
+    -- Row 2: separator
+    mpad(1, 2, _monW, C.sepBg)
+    mfg(C.accent); mbg(C.sepBg)
+    mpos(1, 2)
+    mwrite(string.rep("\140", _monW))  -- solid line char
 end
 
-local function drawPanel(serverName, panelX, panelY, panelW)
-    local s = _stats[serverName]
+local function drawPanel(idx, L)
+    local name = _servers[idx]
+    local s    = _stats[name]
     if not s then return end
 
-    local bg = COL.panelBg
+    local col  = (idx-1) % L.cols
+    local row  = math.floor((idx-1) / L.cols)
+    local px   = 1 + col * (L.panelW + SEP_W)
+    local py   = HEADER_H + 1 + row * PANEL_H
+    local pw   = L.panelW
 
-    -- Row 1: Server name bar
-    local nameBg = s.online and colors.blue or colors.red
-    mfill(panelX, panelY, panelW, nameBg)
-    local nameLabel = serverName
-    if #nameLabel > panelW - 2 then nameLabel = nameLabel:sub(1, panelW - 2) end
-    mset(panelX + 1, panelY, colors.white, nameBg, nameLabel)
+    -- Row 1: server name (coloured header)
+    local nbg = s.online and C.nameBg or C.nameErr
+    mpad(px, py, pw, nbg)
+    mfg(C.nameFg); mbg(nbg); mpos(px+1, py)
+    local label = name:sub(1, pw-2)
+    mwrite(label)
 
-    -- Row 2: Status indicator
-    local dot = s.online and "\7" or "x"
-    local dotColor = s.online and COL.nameOnline or COL.nameOffline
-    local statusText = s.online and "Online" or "Offline"
-    mfill(panelX, panelY + 1, panelW, bg)
-    mset(panelX + 1, panelY + 1, dotColor, bg, dot)
-    mset(panelX + 3, panelY + 1, s.online and COL.nameOnline or COL.nameOffline, bg, statusText)
+    -- Row 2: online dot + status
+    mpad(px, py+1, pw, C.panelBg)
+    local dot    = s.online and "\4" or "x"
+    local dotcol = s.online and C.online or C.offline
+    local statTxt = s.online and "Online" or "Offline"
+    mfg(dotcol);   mbg(C.panelBg); mpos(px+1, py+1); mwrite(dot)
+    mfg(dotcol);   mbg(C.panelBg); mpos(px+3, py+1); mwrite(statTxt:sub(1, pw-4))
 
-    -- Row 3: Request count
-    mfill(panelX, panelY + 2, panelW, bg)
-    mset(panelX + 1, panelY + 2, COL.statDim, bg, "Reqs:")
-    mset(panelX + 7, panelY + 2, COL.stat, bg, tostring(s.requests))
+    -- Row 3: requests
+    mpad(px, py+2, pw, C.panelBg)
+    mfg(C.dimFg);  mbg(C.panelBg); mpos(px+1, py+2); mwrite("Req")
+    mfg(C.statFg); mbg(C.panelBg); mpos(px+5, py+2)
+    mwrite(tostring(s.requests):sub(1, pw-6))
 
-    -- Row 4: Error count
-    mfill(panelX, panelY + 3, panelW, bg)
-    local errColor = s.errors > 0 and COL.logError or COL.statDim
-    mset(panelX + 1, panelY + 3, COL.statDim, bg, "Errs:")
-    mset(panelX + 7, panelY + 3, errColor, bg, tostring(s.errors))
+    -- Row 4: errors
+    mpad(px, py+3, pw, C.panelBg)
+    local ecol = s.errors > 0 and C.logErr or C.dimFg
+    mfg(C.dimFg); mbg(C.panelBg); mpos(px+1, py+3); mwrite("Err")
+    mfg(ecol);    mbg(C.panelBg); mpos(px+5, py+3)
+    mwrite(tostring(s.errors):sub(1, pw-6))
 
-    -- Row 5: "Last:" label
-    mfill(panelX, panelY + 4, panelW, bg)
-    mset(panelX + 1, panelY + 4, COL.statDim, bg, "Last:")
+    -- Row 5: last endpoint label
+    mpad(px, py+4, pw, C.panelBg)
+    mfg(C.dimFg); mbg(C.panelBg); mpos(px+1, py+4); mwrite("Last:")
 
-    -- Row 6: last endpoint (truncated)
-    mfill(panelX, panelY + 5, panelW, bg)
+    -- Row 6: endpoint text (colour by code)
+    mpad(px, py+5, pw, C.panelBg)
     if s.lastEndpoint then
-        local ep = s.lastEndpoint
-        if #ep > panelW - 2 then ep = ep:sub(1, panelW - 2) end
-        local epColor = (s.lastCode and s.lastCode >= 400) and COL.logError
-                        or COL.logOk
-        mset(panelX + 1, panelY + 5, epColor, bg, ep)
+        local epcol = C.statFg
+        if s.lastCode then
+            epcol = s.lastCode >= 500 and C.logErr
+                    or s.lastCode >= 400 and C.logWarn
+                    or C.logOk
+        end
+        local ep = s.lastEndpoint:sub(1, pw-2)
+        mfg(epcol); mbg(C.panelBg); mpos(px+1, py+5); mwrite(ep)
     end
 
-    -- Row 7: code + separator line
-    mfill(panelX, panelY + 6, panelW, COL.border)
+    -- Row 7: code + bottom separator
+    mpad(px, py+6, pw, C.sepBg)
     if s.lastCode then
-        local codeColor = s.lastCode >= 500 and COL.logError
-                          or s.lastCode >= 400 and COL.logWarn
-                          or COL.logOk
-        mset(panelX + 1, panelY + 6, codeColor, COL.border,
-            tostring(s.lastCode))
+        local ccol = s.lastCode >= 500 and C.logErr
+                     or s.lastCode >= 400 and C.logWarn
+                     or C.logOk
+        mfg(ccol); mbg(C.sepBg); mpos(px+1, py+6)
+        mwrite(tostring(s.lastCode))
     end
-end
 
-local function drawPanels(L)
-    for i, sname in ipairs(_servers) do
-        if i > L.n then break end
-        local col = (i - 1) % L.cols
-        local row = math.floor((i - 1) / L.cols)
-        local panelX = 1 + col * (L.panelW + SEPARATOR)
-        local panelY = HEADER_H + 1 + row * PANEL_ROWS
-        drawPanel(sname, panelX, panelY, L.panelW)
-        -- Separator column (right of panel, except last column)
-        if col < L.cols - 1 then
-            vline(panelX + L.panelW, panelY, panelY + PANEL_ROWS - 1, COL.border)
+    -- Vertical separator on right edge (except last col)
+    if col < L.cols - 1 then
+        for ry = py, py+PANEL_H-1 do
+            mbg(C.sepBg); mpos(px+pw, ry); mwrite(" ")
         end
     end
 end
 
--- Log entry colour
-local function logColour(level)
-    if level == "error" then return COL.logError
-    elseif level == "warn"  then return COL.logWarn
-    elseif level == "ok"    then return COL.logOk
-    else return COL.logInfo end
-end
+local LOG_TAGS = { info="INFO", ok=" OK ", warn="WARN", error="ERR!" }
+local LOG_COLS = { info=C.logInfo, ok=C.logOk, warn=C.logWarn, error=C.logErr }
 
--- Log level tag (fixed 4 chars)
-local function logTag(level)
-    if level == "error" then return "ERR!"
-    elseif level == "warn"  then return "WARN"
-    elseif level == "ok"    then return " OK "
-    else return "INFO" end
-end
-
-local function drawLogPanel(L)
+local function drawLog(L)
     if L.logH < 2 then return end
 
-    -- Header bar for log panel
-    mfill(1, L.logY, _monW, COL.headerBg)
-    mset(1, L.logY, COL.accent, COL.headerBg,
-        string.format(" Recent Activity  (%d entries total) ", #_logBuf))
+    -- Log header
+    mpad(1, L.logY, _monW, C.headerBg)
+    mfg(C.accent); mbg(C.headerBg); mpos(1, L.logY)
+    local hdr = string.format(" Activity Log  (%d entries) ", #_logBuf)
+    mwrite(hdr:sub(1, _monW))
 
-    -- Log lines
-    local start = math.max(1, #_logBuf - (L.logH - 2) + 1 - _logScroll)
+    -- Entries: show most recent, bottom-aligned
+    local visible = L.logH - 1
+    local startIdx = math.max(1, #_logBuf - visible + 1)
     local row = L.logY + 1
-    for i = start, math.min(start + L.logH - 2, #_logBuf) do
+
+    for i = startIdx, #_logBuf do
         local e = _logBuf[i]
-        if not e then break end
-        mfill(1, row, _monW, COL.logBg)
-        -- Timestamp (seconds since boot)
-        local sec = math.floor((e.ts - _bootEpoch) / 1000)
-        local tsStr = string.format("%5ds", sec)
-        mset(1, row, COL.logMuted, COL.logBg, tsStr)
-        -- Level badge
-        local badge = "[" .. logTag(e.level) .. "]"
-        mset(7, row, logColour(e.level), COL.logBg, badge)
-        -- Server name (8 chars padded)
-        local sname = e.server or "?"
-        if #sname > 8 then sname = sname:sub(1, 8) end
-        mset(14, row, COL.statDim, COL.logBg,
-            string.format("%-8s", sname))
+        if not e or row > _monH then break end
+
+        mpad(1, row, _monW, C.logBg)
+
+        -- Timestamp
+        local sec = math.floor((e.ts - _boot) / 1000)
+        local ts  = string.format("%5ds", sec)
+        mfg(C.logDim); mbg(C.logBg); mpos(1, row); mwrite(ts)
+
+        -- Level badge [XXXX]
+        local tag    = LOG_TAGS[e.level] or "INFO"
+        local tagcol = LOG_COLS[e.level] or C.logInfo
+        mfg(tagcol); mbg(C.logBg); mpos(7, row)
+        mwrite("[" .. tag .. "]")
+
+        -- Server name (9 chars)
+        mfg(C.dimFg); mbg(C.logBg); mpos(14, row)
+        mwrite(string.format("%-9s", (e.server or "?"):sub(1,9)))
+
         -- Message
-        local msgX = 23
+        local msgX = 24
         local msgW = _monW - msgX
-        local msg  = e.message or ""
-        if #msg > msgW then msg = msg:sub(1, msgW) end
-        mset(msgX, row, colors.white, COL.logBg, msg)
+        if msgW > 0 then
+            mfg(C.logFg); mbg(C.logBg); mpos(msgX, row)
+            mwrite((e.message or ""):sub(1, msgW))
+        end
 
         row = row + 1
     end
@@ -400,43 +340,45 @@ end
 -- Public: redraw
 -- ─────────────────────────────────────────────────────────────
 
---- Redraw the entire monitor dashboard.
---- Call this after every log entry or on a timer.
 function dash.redraw()
+    -- Try to (re)acquire monitor every call in case it was connected late
     if not _mon then
         if not initMonitor() then return end
     end
 
-    -- Re-check size (monitor may have been resized)
-    _monW, _monH = _mon.getSize()
-
-    _mon.setBackgroundColor(COL.bg)
-    _mon.clear()
-
-    local L = layout()
-    if not L then
-        mset(1, 1, COL.logWarn, COL.bg, "No servers registered yet.")
-        return
-    end
-
-    drawHeader(L)
-    drawPanels(L)
-    drawLogPanel(L)
-end
-
---- Scroll the log panel up/down. dir = +1 (up) or -1 (down).
-function dash.scroll(dir)
-    _logScroll = math.max(0, _logScroll + dir)
-end
-
---- Call once at startup to initialise monitor.
-function dash.init()
-    initMonitor()
-    if _mon then
-        _mon.setBackgroundColor(COL.bg)
+    -- Wrap all drawing in pcall so a monitor disconnect doesn't crash everything
+    local ok, err = pcall(function()
+        _monW, _monH = _mon.getSize()
+        mbg(C.bg)
         _mon.clear()
-        mset(1, 1, COL.accent, COL.bg,
-            " DorpOS Server Monitor — starting up...")
+
+        local L = computeLayout()
+        if not L then
+            mfg(C.logWarn); mbg(C.bg)
+            mpos(1,1); mwrite(" No servers registered yet.")
+            return
+        end
+
+        drawHeader()
+        for i = 1, L.n do drawPanel(i, L) end
+        drawLog(L)
+    end)
+
+    if not ok then
+        -- Monitor probably disconnected; reset so next call re-detects
+        _mon = nil
+    end
+end
+
+--- Call once at startup.
+function dash.init()
+    if initMonitor() then
+        mbg(C.bg); _mon.clear()
+        mfg(C.accent); mbg(C.bg); mpos(1,1)
+        mwrite(" DorpOS Monitor — starting up...")
+        print("[Dashboard] Monitor found: " .. _monW .. "x" .. _monH)
+    else
+        print("[Dashboard] No monitor found — will retry on each redraw.")
     end
 end
 
