@@ -33,7 +33,6 @@ local BUILTIN_APPS = {
     { id = C.APP_SETTINGS,    name = "Settings",    icon = "*",    path = "/apps/settings/init.lua",    builtin = true },
     { id = C.APP_CALCULATOR,  name = "Calc",        icon = "+",    path = "/apps/calculator/init.lua",  builtin = true },
     { id = C.APP_MESSAGES,    name = "Messages",    icon = "M",    path = "/apps/messages/init.lua",    builtin = true },
-    { id = C.APP_CONTACTS,    name = "Contacts",    icon = "@",    path = "/apps/contacts/init.lua",    builtin = true },
     { id = C.APP_NOTES,       name = "Notes",       icon = "=",    path = "/apps/notes/init.lua",       builtin = true },
     { id = C.APP_FILES,       name = "Files",       icon = "F",    path = "/apps/files/init.lua",       builtin = true },
     { id = C.APP_MARKETPLACE, name = "Market",      icon = "$",    path = "/apps/marketplace/init.lua", builtin = true },

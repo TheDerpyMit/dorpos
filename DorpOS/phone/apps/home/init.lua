@@ -133,10 +133,6 @@ local APP_ICONS = {
         "  [+-]  ",
         "  [*/]  "
     },
-    [C.APP_CONTACTS] = {
-        "  ( )   ",
-        "  /-\\   "
-    },
     [C.APP_NOTES] = {
         "  ___   ",
         " |___|  "

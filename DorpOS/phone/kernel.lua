@@ -218,10 +218,6 @@ local function processSystemEvents()
     end
 end
 
--- ─────────────────────────────────────────────────────────────
--- Real-time push listener
--- ─────────────────────────────────────────────────────────────
-
 local function realtimePushListener()
     while true do
         local senderId, msg = rednet.receive(C.PROTOCOL_NAME)
@@ -232,6 +228,13 @@ local function realtimePushListener()
                 os.queueEvent("dorpos_friend_update", msg)
             end
         end
+    end
+end
+
+local function skynetListener()
+    local skynet = require("system.network.skynet")
+    while true do
+        skynet.listen()
     end
 end
 
@@ -252,7 +255,8 @@ parallel.waitForAny(
     end,
     processSystemEvents,
     discoveryResponder, -- replies to nearby phones scanning for friends
-    realtimePushListener
+    realtimePushListener,
+    skynetListener
 )
 
 log.info("kernel", "Kernel shutting down")

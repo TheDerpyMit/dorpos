@@ -12,6 +12,7 @@ local Theme   = require("system.theme.theme")
 local Storage = require("system.storage.storage")
 local net     = require("system.network.network")
 local utils   = require("system.utils.utils")
+local skynet  = require("system.network.skynet")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 
@@ -254,6 +255,12 @@ local function submitPost()
         editField  = "title"
         view = "browse"
         showStatus("/ Loading...", H - 1, t.textMuted)
+        
+        -- Broadcast new listing notification via Skynet in real-time
+        pcall(function()
+            skynet.send("dorpos-marketplace-updates", { type = "new_listing" })
+        end)
+
         fetchListings(searchQ, sortBy)
         drawBrowse()
     else
@@ -297,16 +304,36 @@ local function drawMine()
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Main loop — initial load
+-- Main loop — initial load and Skynet registration
 -- ─────────────────────────────────────────────────────────────
 
 showStatus("/ Loading listings...", H)
 fetchListings()
+
+-- Connect to Skynet marketplace channel
+pcall(function()
+    skynet.connect()
+    skynet.open("dorpos-marketplace-updates")
+end)
+
 drawBrowse()
 
 while true do
     local ev = { os.pullEvent() }
     local name = ev[1]
+
+    -- ── Real-time Skynet Notifications ───────────────────────
+    if name == "skynet_message" then
+        local chan, msg = ev[2], ev[3]
+        if chan == "dorpos-marketplace-updates" then
+            -- Silent background update
+            fetchListings(searchQ, sortBy)
+            if view == "browse" then
+                drawBrowse()
+                ui.toast({ text = "Marketplace updated in real-time!", type = "info", y = H - 1 })
+            end
+        end
+    end
 
     -- ── Debounced search timer fires ─────────────────────────
     if name == "timer" and ev[2] == _searchTimer then
