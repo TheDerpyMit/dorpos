@@ -21,7 +21,6 @@ local Theme   = require("system.theme.theme")
 local Storage = require("system.storage.storage")
 local sha     = require("system.crypto.sha256")
 local utils   = require("system.utils.utils")
-local anim    = require("system.animation.animation")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 
@@ -151,12 +150,9 @@ end
 -- ─────────────────────────────────────────────────────────────
 
 local function unlockAnim()
-    anim.slideUp(function()
-        local t = Theme.get()
-        term.setBackgroundColor(t.accent)
-        term.clear()
-        ui.write(math.floor((W - 9) / 2) + 1, H / 2, "Unlocked!", t.textOnAccent, t.accent)
-    end)
+    local t = Theme.get()
+    term.setBackgroundColor(t.bg)
+    term.clear()
 end
 
 -- ─────────────────────────────────────────────────────────────

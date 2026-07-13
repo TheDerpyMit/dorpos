@@ -17,7 +17,6 @@
 local C       = require("shared.constants")
 local ui      = require("system.ui.ui")
 local Theme   = require("system.theme.theme")
-local anim    = require("system.animation.animation")
 local appMgr  = require("system.services.app_manager")
 local notif   = require("system.services.notification_manager")
 local Storage = require("system.storage.storage")
@@ -34,10 +33,13 @@ local STATUS_Y   = 1
 local CONTENT_Y  = 2
 local CONTENT_H  = H - 2
 local DOCK_Y     = H
-local COLS       = 3    -- icon columns (3 allows 8 chars per icon, preventing truncation)
-local ROWS       = 4    -- icon rows per page
+local COLS       = 3
+local ROWS       = 4
 local ICON_W     = math.floor(W / COLS)
-local ICON_H     = 3   -- rows per icon (char + label + gap)
+-- Centre the icon grid by computing leftover space
+local GRID_W     = COLS * ICON_W
+local LEFT_MARGIN = math.floor((W - GRID_W) / 2) + 1
+local ICON_H     = 3
 local ICONS_PER_PAGE = COLS * ROWS
 
 -- ─────────────────────────────────────────────────────────────
@@ -261,7 +263,7 @@ local function drawHome(apps)
             local appIdx = startIdx + row * COLS + col
             if appIdx <= #apps then
                 local app = apps[appIdx]
-                local ix  = 1 + col * ICON_W
+                local ix  = LEFT_MARGIN + col * ICON_W
                 local iy  = CONTENT_Y + row * ICON_H
 
                 drawAppIcon(app, ix, iy, false)
@@ -507,33 +509,36 @@ while true do
         if page ~= oldPage then
             prefs.set("page", page)
             prefs.save()
-            if dir > 0 then
-                anim.slideLeft(function() drawHome(apps2) end, function() drawHome(apps2) end)
-            else
-                anim.slideRight(function() drawHome(apps2) end, function() drawHome(apps2) end)
-            end
             drawHome(apps2)
         end
 
     elseif name == "dorpos_launch_app" then
         local appId = ev[2]
         local args  = ev[3]
-        -- Animate open
         local info = appMgr.getInfo(appId)
         if info then
-            anim.fade(function() ui.clear() end, false)
+            -- Instant splash card — no black screen
+            local t = Theme.get()
+            ui.clear()
+            term.setCursorPos(1, math.floor(H / 2) - 1)
+            term.setBackgroundColor(t.bgCard)
+            term.setTextColor(t.textMuted)
+            term.write(utils.centre("Opening...", W))
+            term.setCursorPos(1, math.floor(H / 2))
+            term.setBackgroundColor(t.bgCard)
+            term.setTextColor(t.text)
+            term.write(utils.centre(info.name or appId, W))
             local ok, err = appMgr.launch(appId, args)
             if not ok then
-                -- Show error briefly
                 term.setBackgroundColor(colors.red)
                 term.setTextColor(colors.white)
                 term.clear()
-                term.setCursorPos(1, H / 2)
+                term.setCursorPos(1, math.floor(H / 2))
                 term.write(utils.centre("App crashed: " .. (err or "?"), W))
                 os.sleep(2)
             end
             apps = getLaunchableApps()
-            anim.fade(function() drawHome(apps) end, true)
+            drawHome(apps)
         end
 
     elseif name == "dorpos_notification" then

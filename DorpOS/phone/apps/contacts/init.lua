@@ -7,6 +7,9 @@
         "requests"  — incoming friend requests with Accept / Decline
         "scan"      — rednet discovery: broadcasts and lists nearby phones
         "search"    — look up any user by @username and send a request
+
+    Input: real keyboard only (char / key events).  No on-screen keyboard.
+    Tab bar: full-width single row with abbreviated labels.
 ]]
 
 local C       = require("shared.constants")
@@ -17,7 +20,6 @@ local net     = require("system.network.network")
 local utils   = require("system.utils.utils")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
-local kbComp = require("system.ui.components.keyboard")
 
 local PROTO = "dorpos_discover"
 
@@ -28,12 +30,10 @@ local PROTO = "dorpos_discover"
 local userStore  = Storage.open("user_config")
 local myUsername = userStore.get("username", "me")
 
-local view         = "friends"
-local friends      = {}   -- accepted friends
-local requests     = {}   -- incoming friend requests
-local scanResults  = {}   -- discovered nearby phones
-local shifted      = false
-local kbHits       = nil
+local view        = "friends"
+local friends     = {}
+local requests    = {}
+local scanResults = {}
 
 -- ─────────────────────────────────────────────────────────────
 -- Server calls
@@ -53,85 +53,91 @@ local function sendRequest(username)
 end
 
 local function acceptRequest(username)
-    local ok, resp = net.post(C.HOST_ACCOUNTS, "/friends/accept", { username = username })
-    return ok
+    return net.post(C.HOST_ACCOUNTS, "/friends/accept", { username = username })
 end
 
 local function declineRequest(username)
-    local ok = net.post(C.HOST_ACCOUNTS, "/friends/decline", { username = username })
-    return ok
+    return net.post(C.HOST_ACCOUNTS, "/friends/decline", { username = username })
 end
 
-local function removeFriend(username)
-    net.post(C.HOST_ACCOUNTS, "/friends/remove", { username = username })
-end
-
--- Open a chat with a friend by launching Messages with a target
 local function openChat(username)
-    -- Start convo on messages server, then launch messages app
     net.post(C.HOST_MESSAGES, "/messages/start", { with = username })
     os.queueEvent("dorpos_launch_app", C.APP_MESSAGES, { openWith = username })
-    return  -- app exits, kernel handles launch
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Tab bar helper
+-- Tab bar — 4 tabs across full width, no truncation
 -- ─────────────────────────────────────────────────────────────
+-- Tab layout:  [  Friends  ][  Requests ][   Scan   ][  Search  ]
+-- Each tab = W/4 columns wide. Use short labels to fit.
 
-local function drawTabBar()
-    local t    = Theme.get()
-    local tabs = {
-        { id = "friends",  label = "Friends" },
-        { id = "requests", label = "Requests" },
-        { id = "scan",     label = "Scan" },
-        { id = "search",   label = "Search" },
-    }
-    local tabW = math.floor(W / #tabs)
-    for i, tab in ipairs(tabs) do
-        local x   = 1 + (i - 1) * tabW
-        local isSel = (tab.id == view)
-        local bg  = isSel and t.accent or t.bgCard
-        local fg  = isSel and t.textOnAccent or t.textMuted
-        term.setCursorPos(x, 2)
-        term.setBackgroundColor(bg)
-        term.setTextColor(fg)
-        term.write(utils.padRight(utils.centre(tab.label, tabW), tabW))
-    end
-end
+local TAB_DEFS = {
+    { id = "friends",  label = "Friends"  },
+    { id = "requests", label = "Requests" },
+    { id = "scan",     label = "Scan"     },
+    { id = "search",   label = "Search"   },
+}
 
 local function drawHeader()
-    local t = Theme.get()
+    local t    = Theme.get()
+    local tabW = math.floor(W / #TAB_DEFS)
+
+    -- Row 1: App title bar
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    term.write(utils.padRight(" Friends", W))
-    drawTabBar()
+    term.write(utils.padRight(" Contacts", W))
+
+    -- Row 2: Tab bar — each tab gets tabW columns
+    for i, tab in ipairs(TAB_DEFS) do
+        local x     = 1 + (i - 1) * tabW
+        local isSel = (tab.id == view)
+        local bg    = isSel and t.text or t.bgCard
+        local fg    = isSel and t.bg   or t.textMuted
+
+        -- Fill tab background
+        term.setCursorPos(x, 2)
+        term.setBackgroundColor(bg)
+        term.setTextColor(fg)
+
+        -- Centre the label, always fits (tabW = 6 for 26-wide screens)
+        local lbl = tab.label
+        if #lbl > tabW - 1 then lbl = lbl:sub(1, tabW - 1) end
+        local pad = tabW - #lbl
+        local lp  = math.floor(pad / 2)
+        local rp  = pad - lp
+        term.write(string.rep(" ", lp) .. lbl .. string.rep(" ", rp))
+
+        -- Request badge on requests tab
+        if tab.id == "requests" and #requests > 0 then
+            term.setCursorPos(x, 2)
+            term.setBackgroundColor(t.danger)
+            term.setTextColor(colors.white)
+            term.write(tostring(math.min(#requests, 9)))
+        end
+    end
+end
+
+local function drawBack()
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Friends list view
 -- ─────────────────────────────────────────────────────────────
 
+local _friendHits = {}
+
 local function drawFriends()
     local t = Theme.get()
     ui.clear()
     drawHeader()
-
-    -- Badge on "Requests" tab if there are any
-    if #requests > 0 then
-        local tabW = math.floor(W / 4)
-        term.setCursorPos(1 + tabW, 2)
-        term.setBackgroundColor(t.bgCard)
-        term.setTextColor(t.danger)
-        term.write("[" .. #requests .. "]")
-    end
-
-    local _hits = {}
+    _friendHits = {}
 
     if #friends == 0 then
         ui.write(2, 5, "No friends yet.", t.textMuted, t.bg)
-        ui.write(2, 6, "Use Search or Scan", t.textMuted, t.bg)
-        ui.write(2, 7, "to find people.", t.textMuted, t.bg)
+        ui.write(2, 6, "Use Search or Scan to", t.textMuted, t.bg)
+        ui.write(2, 7, "find and add people.", t.textMuted, t.bg)
     else
         for i, f in ipairs(friends) do
             local ry = 3 + i
@@ -145,67 +151,62 @@ local function drawFriends()
             term.write("[Message]")
             term.setBackgroundColor(t.bg)
             term.write(" ")
-            table.insert(_hits, { y = ry, username = f.username })
+            table.insert(_friendHits, { y = ry, username = f.username })
         end
     end
 
-    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
-    return _hits
+    drawBack()
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Friend requests view
 -- ─────────────────────────────────────────────────────────────
 
-local reqHits = {}
+local _reqHits = {}
 
 local function drawRequests()
     local t = Theme.get()
     ui.clear()
     drawHeader()
-
-    reqHits = {}
+    _reqHits = {}
 
     if #requests == 0 then
         ui.write(2, 5, "No pending requests.", t.textMuted, t.bg)
-        ui.write(2, 6, "When someone adds you,", t.textMuted, t.bg)
-        ui.write(2, 7, "they'll appear here.", t.textMuted, t.bg)
+        ui.write(2, 6, "They'll appear here", t.textMuted, t.bg)
+        ui.write(2, 7, "when someone adds you.", t.textMuted, t.bg)
     else
-        ui.write(2, 4, "Incoming requests:", t.textMuted, t.bg)
+        ui.write(2, 4, "Tap OK to accept, X to decline:", t.textMuted, t.bg)
         for i, r in ipairs(requests) do
             local ry = 4 + i
             if ry > H - 2 then break end
-            -- Username
             term.setCursorPos(1, ry)
             term.setBackgroundColor(t.bg)
             term.setTextColor(t.text)
             term.write(utils.padRight("  @" .. r.username, W - 12))
-            -- Accept button
             term.setBackgroundColor(t.success)
-            term.setTextColor(t.textOnAccent)
+            term.setTextColor(colors.white)
             term.write("[OK]")
             term.setBackgroundColor(t.bg)
             term.write(" ")
-            -- Decline button
             term.setBackgroundColor(t.danger)
-            term.setTextColor(t.textOnAccent)
+            term.setTextColor(colors.white)
             term.write("[X]")
             term.setBackgroundColor(t.bg)
             term.write(" ")
-            table.insert(reqHits, {
-                y          = ry,
-                username   = r.username,
-                acceptX    = W - 11,
-                declineX   = W - 6,
+            table.insert(_reqHits, {
+                y        = ry,
+                username = r.username,
+                acceptX  = W - 11,
+                declineX = W - 6,
             })
         end
     end
 
-    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+    drawBack()
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Scan view — rednet discovery
+-- Scan view
 -- ─────────────────────────────────────────────────────────────
 
 local function runScan()
@@ -214,21 +215,27 @@ local function runScan()
     drawHeader()
     ui.write(2, 5, "Scanning nearby phones...", t.textMuted, t.bg)
 
-    -- Broadcast discovery ping
     rednet.broadcast({
         type = "dorpos.discover",
         from = myUsername,
     }, PROTO)
 
-    -- Collect responses for 3 seconds
     scanResults = {}
     local seen = {}
-    seen[myUsername:lower()] = true  -- don't show ourselves
+    seen[myUsername:lower()] = true
 
+    local spinChars = { "|", "/", "-", "\\" }
     local deadline = os.clock() + 3
+    local frame = 0
     while os.clock() < deadline do
+        local sp = spinChars[(frame % #spinChars) + 1]
+        term.setCursorPos(2, 6)
+        term.setBackgroundColor(t.bg)
+        term.setTextColor(t.accent)
+        term.write(sp .. " Listening... ")
+        frame = frame + 1
         local remaining = deadline - os.clock()
-        local senderId, msg = rednet.receive(PROTO, math.max(0.1, remaining))
+        local senderId, msg = rednet.receive(PROTO, math.min(0.3, math.max(0.05, remaining)))
         if senderId and type(msg) == "table"
            and msg.type == "dorpos.discover.reply"
            and type(msg.username) == "string" then
@@ -240,57 +247,26 @@ local function runScan()
         end
     end
 
-    -- Draw results
     ui.clear()
     drawHeader()
+end
+
+local _scanHits = {}
+
+local function drawScan()
+    local t = Theme.get()
+    -- header already drawn if coming from runScan; redraw fully
+    ui.clear()
+    drawHeader()
+    _scanHits = {}
 
     if #scanResults == 0 then
         ui.write(2, 5, "No phones found nearby.", t.textMuted, t.bg)
-        ui.write(2, 6, "Make sure others have", t.textMuted, t.bg)
-        ui.write(2, 7, "DorpOS running.", t.textMuted, t.bg)
+        ui.write(2, 6, "Tap Scan Now to search.", t.textMuted, t.bg)
+        ui.button({ x = math.floor((W - 14) / 2) + 1, y = 9,
+                    width = 14, label = "Scan Now!", style = "primary" })
     else
-        ui.write(2, 4, "Found " .. #scanResults .. " phone(s):", t.textMuted, t.bg)
-        for i, r in ipairs(scanResults) do
-            local ry = 4 + i
-            if ry > H - 2 then break end
-            -- Check if already friends
-            local isFriend = false
-            for _, f in ipairs(friends) do
-                if f.username:lower() == r.username:lower() then isFriend = true end
-            end
-            term.setCursorPos(1, ry)
-            term.setBackgroundColor(t.bg)
-            term.setTextColor(t.text)
-            term.write(utils.padRight("  @" .. r.username, W - 10))
-            if isFriend then
-                term.setBackgroundColor(t.bgCard)
-                term.setTextColor(t.textMuted)
-                term.write(" Friends ")
-            else
-                term.setBackgroundColor(t.accent)
-                term.setTextColor(t.textOnAccent)
-                term.write("[Add +] ")
-            end
-        end
-    end
-
-    ui.button({ x = W - 9, y = H, width = 9, label = "Rescan", style = "primary" })
-    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
-end
-
-local function drawScan()
-    -- scanResults already populated, just redraw
-    local t = Theme.get()
-    ui.clear()
-    drawHeader()
-
-    if #scanResults == 0 then
-        ui.write(2, 5, "Tap Scan to start.", t.textMuted, t.bg)
-        ui.write(2, 6, "Discovers nearby", t.textMuted, t.bg)
-        ui.write(2, 7, "DorpOS phones.", t.textMuted, t.bg)
-        ui.button({ x = math.floor((W - 12) / 2), y = 9, width = 12, label = "Scan Now!", style = "primary" })
-    else
-        ui.write(2, 4, "Nearby phones:", t.textMuted, t.bg)
+        ui.write(2, 4, "Found " .. #scanResults .. " phone(s) nearby:", t.textMuted, t.bg)
         for i, r in ipairs(scanResults) do
             local ry = 4 + i
             if ry > H - 2 then break end
@@ -311,27 +287,64 @@ local function drawScan()
                 term.setTextColor(t.textOnAccent)
                 term.write("[Add +] ")
             end
+            table.insert(_scanHits, { y = ry, r = r, isFriend = isFriend })
         end
         ui.button({ x = W - 9, y = H, width = 9, label = "Rescan", style = "primary" })
     end
 
-    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
+    drawBack()
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Search view — add by @username
+-- Search view
 -- ─────────────────────────────────────────────────────────────
 
 local searchQuery  = ""
 local searchStatus = ""
 local searchOk     = true
 
+local function doSearch()
+    local t = Theme.get()
+    local target = searchQuery:lower()
+    if #target == 0 then return end
+
+    -- Show loading
+    term.setCursorPos(1, 7)
+    term.setBackgroundColor(t.bg)
+    term.setTextColor(t.textMuted)
+    term.write(utils.padRight("  / Searching...", W))
+
+    local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/lookup", { username = target })
+    if not ok or not (resp.body and resp.body.username) then
+        searchStatus = "User '" .. target .. "' not found!"
+        searchOk     = false
+        return
+    end
+    local canonical = resp.body.username
+
+    term.setCursorPos(1, 7)
+    term.setBackgroundColor(t.bg)
+    term.setTextColor(t.textMuted)
+    term.write(utils.padRight("  / Sending request...", W))
+
+    local reqOk, status = sendRequest(canonical)
+    if reqOk then
+        searchStatus = (status == "accepted") and "You're now friends! \4" or "Request sent! \4"
+        searchOk     = true
+        searchQuery  = ""
+        fetchFriends()
+    else
+        searchStatus = "Could not send request."
+        searchOk     = false
+    end
+end
+
 local function drawSearch()
     local t = Theme.get()
     ui.clear()
     drawHeader()
 
-    ui.write(2, 4, "Enter @username to add:", t.textMuted, t.bg)
+    ui.write(2, 4, "Type @username + Enter to add:", t.textMuted, t.bg)
     ui.textbox({ x = 2, y = 5, width = W - 3, value = searchQuery,
                  focused = true, placeholder = "e.g. derpymit" })
 
@@ -340,68 +353,48 @@ local function drawSearch()
         ui.write(2, 7, utils.truncate(searchStatus, W - 2), fg, t.bg)
     end
 
-    kbHits = kbComp.draw({
-        y = H - 7, shifted = shifted,
-        onChar  = function(c) searchQuery = searchQuery .. c; searchStatus = "" end,
-        onBack  = function()
-            if #searchQuery > 0 then searchQuery = searchQuery:sub(1, -2); searchStatus = "" end
-        end,
-        onEnter = function()
-            local target = searchQuery:lower()
-            if #target == 0 then return end
-
-            -- Verify user exists
-            searchStatus = "Searching..."
-            searchOk = true
-
-            local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/lookup", { username = target })
-            if not ok or not (resp.body and resp.body.username) then
-                searchStatus = "User '" .. target .. "' not found!"
-                searchOk = false
-                return
-            end
-
-            local canonical = resp.body.username
-            -- Send friend request
-            local reqOk, status = sendRequest(canonical)
-            if reqOk then
-                if status == "accepted" then
-                    searchStatus = "You're now friends! \4"
-                    fetchFriends()
-                else
-                    searchStatus = "Friend request sent! \4"
-                end
-                searchOk = true
-                searchQuery = ""
-            else
-                searchStatus = "Could not send request."
-                searchOk = false
-            end
-        end,
-        onShift = function() shifted = not shifted end,
-        onClose = function() view = "friends" end,
-    })
+    drawBack()
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Tab hit detection
 -- ─────────────────────────────────────────────────────────────
 
-local tabs = { "friends", "requests", "scan", "search" }
 local function tabHit(mx, my)
     if my ~= 2 then return nil end
-    local tabW = math.floor(W / #tabs)
-    local idx  = math.ceil(mx / tabW)
-    return tabs[idx]
+    local tabW = math.floor(W / #TAB_DEFS)
+    local idx  = math.min(math.ceil(mx / tabW), #TAB_DEFS)
+    return TAB_DEFS[idx] and TAB_DEFS[idx].id or nil
+end
+
+local function switchView(newView)
+    if newView == view then return end
+    view = newView
+    searchStatus = ""
+    if view == "friends"  then drawFriends()
+    elseif view == "requests" then drawRequests()
+    elseif view == "scan"     then drawScan()
+    elseif view == "search"   then drawSearch()
+    end
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Main
 -- ─────────────────────────────────────────────────────────────
 
+-- Initial load with indicator
+local t = Theme.get()
+ui.clear()
+term.setCursorPos(1, 1)
+term.setBackgroundColor(t.accent)
+term.setTextColor(t.textOnAccent)
+term.write(utils.padRight(" Contacts", W))
+term.setCursorPos(1, 5)
+term.setBackgroundColor(t.bg)
+term.setTextColor(t.textMuted)
+term.write("  / Loading friends...")
 fetchFriends()
-
-local friendHits = drawFriends()
+drawFriends()
 
 while true do
     local ev = { os.pullEvent() }
@@ -409,106 +402,102 @@ while true do
 
     if name == "dorpos_friend_update" then
         fetchFriends()
-        if view == "friends" then friendHits = drawFriends()
+        if view == "friends"  then drawFriends()
         elseif view == "requests" then drawRequests()
         end
     end
 
-    -- Tab switching (row 2 = tab bar)
     if name == "mouse_click" then
         local mx, my = ev[3], ev[4]
-        local tab = tabHit(mx, my)
-        if tab and tab ~= view then
-            view = tab
-            searchStatus = ""
-            if view == "friends"  then friendHits = drawFriends()
-            elseif view == "requests" then drawRequests()
-            elseif view == "scan"     then drawScan()
-            elseif view == "search"   then drawSearch()
-            end
-        end
-    end
 
-    -- View-specific handling
-    if view == "friends" then
-        if name == "mouse_click" then
-            local mx, my = ev[3], ev[4]
-            if my == H and mx <= 3 then return end
-            for _, h in ipairs(friendHits) do
+        -- Tab bar
+        local tab = tabHit(mx, my)
+        if tab then
+            switchView(tab)
+        -- Global back button
+        elseif my == H and mx <= 3 then
+            return
+        -- View-specific
+        elseif view == "friends" then
+            for _, h in ipairs(_friendHits) do
                 if my == h.y then
-                    -- Tap anywhere on friend row → open chat
                     openChat(h.username)
-                    return  -- app exits, kernel re-launches messages
+                    return
                 end
             end
-        end
 
-    elseif view == "requests" then
-        if name == "mouse_click" then
-            local mx, my = ev[3], ev[4]
-            if my == H and mx <= 3 then return end
-            for _, h in ipairs(reqHits) do
+        elseif view == "requests" then
+            for _, h in ipairs(_reqHits) do
                 if my == h.y then
                     if mx >= h.acceptX and mx < h.acceptX + 4 then
+                        term.setCursorPos(1, h.y)
+                        term.setBackgroundColor(Theme.get().bg)
+                        term.setTextColor(Theme.get().textMuted)
+                        term.write(utils.padRight("  / Accepting...", W))
                         acceptRequest(h.username)
+                        fetchFriends()
                         drawRequests()
                     elseif mx >= h.declineX and mx < h.declineX + 3 then
+                        term.setCursorPos(1, h.y)
+                        term.setBackgroundColor(Theme.get().bg)
+                        term.setTextColor(Theme.get().textMuted)
+                        term.write(utils.padRight("  / Declining...", W))
                         declineRequest(h.username)
+                        fetchFriends()
                         drawRequests()
                     end
                     break
                 end
             end
-        end
 
-    elseif view == "scan" then
-        if name == "mouse_click" then
-            local mx, my = ev[3], ev[4]
-            if my == H and mx <= 3 then return end
-            if (my == H and mx >= W - 9) or (my == 9 and #scanResults == 0) then
-                -- Scan / Rescan button
+        elseif view == "scan" then
+            -- Scan Now / Rescan buttons
+            if (my == 9 and #scanResults == 0) or (my == H and mx >= W - 9) then
                 runScan()
+                drawScan()
             else
-                -- Tap on a discovered phone
-                local offset = 5  -- results start at row 5
-                for i, r in ipairs(scanResults) do
-                    local ry = 4 + i
-                    if my == ry and mx >= W - 9 then
-                        -- Check not already friends
-                        local isFriend = false
-                        for _, f in ipairs(friends) do
-                            if f.username:lower() == r.username:lower() then isFriend = true end
-                        end
-                        if not isFriend then
-                            local t = Theme.get()
-                            local reqOk, status = sendRequest(r.username)
-                            -- Show brief confirmation
-                            term.setCursorPos(1, ry)
-                            term.setBackgroundColor(t.bg)
-                            term.setTextColor(reqOk and t.success or t.danger)
-                            term.write(utils.padRight("  " .. (reqOk and "Request sent!" or "Failed"), W))
-                            os.sleep(1)
-                            fetchFriends()
-                            drawScan()
-                        end
+                -- Tap a scan result to add
+                for _, h in ipairs(_scanHits) do
+                    if my == h.y and not h.isFriend then
+                        local t2 = Theme.get()
+                        term.setCursorPos(1, h.y)
+                        term.setBackgroundColor(t2.bg)
+                        term.setTextColor(t2.textMuted)
+                        term.write(utils.padRight("  / Sending request...", W))
+                        local reqOk = sendRequest(h.r.username)
+                        term.setCursorPos(1, h.y)
+                        term.setBackgroundColor(t2.bg)
+                        term.setTextColor(reqOk and t2.success or t2.danger)
+                        term.write(utils.padRight("  " .. (reqOk and "\4 Sent!" or "x Failed"), W))
+                        os.sleep(0.8)
+                        fetchFriends()
+                        drawScan()
                         break
                     end
                 end
             end
+
+        elseif view == "search" then
+            -- clicks in search view do nothing extra; keyboard drives input
         end
 
-    elseif view == "search" then
-        if name == "mouse_click" then
-            local mx, my = ev[3], ev[4]
-            if my == H and mx <= 3 then return end
-            if kbHits then kbComp.handleClick(kbHits, mx, my) end
-            if view == "search" then drawSearch()
-            elseif view == "friends" then friendHits = drawFriends() end
-        elseif name == "char" then
-            searchQuery = searchQuery .. ev[2]; searchStatus = ""; drawSearch()
-        elseif name == "key" then
-            if ev[2] == keys.backspace and #searchQuery > 0 then
-                searchQuery = searchQuery:sub(1, -2); searchStatus = ""; drawSearch()
+    elseif name == "char" then
+        if view == "search" then
+            searchQuery = searchQuery .. ev[2]
+            searchStatus = ""
+            drawSearch()
+        end
+
+    elseif name == "key" then
+        if view == "search" then
+            local key = ev[2]
+            if key == keys.backspace and #searchQuery > 0 then
+                searchQuery = searchQuery:sub(1, -2)
+                searchStatus = ""
+                drawSearch()
+            elseif key == keys.enter then
+                doSearch()
+                drawSearch()
             end
         end
     end

@@ -24,7 +24,6 @@ local C     = require("shared.constants")
 local log   = require("system.utils.logger")
 local Theme = require("system.theme.theme")
 local net   = require("system.network.network")
-local anim  = require("system.animation.animation")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 
@@ -80,13 +79,6 @@ local function logoScreen()
         cwrite(startY + i - 1, line, colors.cyan, colors.black)
     end
     cwrite(startY + #logo + 1, "OS", colors.lightGray, colors.black)
-
-    -- Loading dots animation
-    for dots = 1, 3 do
-        cwrite(startY + #logo + 2, "Loading" .. string.rep(".", dots), colors.gray, colors.black)
-        os.sleep(0.35)
-    end
-    os.sleep(0.3)
 end
 
 local function checkScreen(label, result, ok)

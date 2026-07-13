@@ -57,10 +57,10 @@ Constants.HOST_CLOUD            = "dorpos.cloud"
 -- Networking Timings (seconds)
 -- ─────────────────────────────────────────────────────────────
 
-Constants.NET_TIMEOUT               = 10
-Constants.NET_RETRY_DELAY           = 2
-Constants.NET_MAX_RETRIES           = 3
-Constants.NET_LOOKUP_TIMEOUT        = 5     -- rednet.lookup timeout
+Constants.NET_TIMEOUT               = 3     -- seconds (local rednet is fast)
+Constants.NET_RETRY_DELAY           = 0.5   -- seconds between retries
+Constants.NET_MAX_RETRIES           = 2     -- one retry is enough
+Constants.NET_LOOKUP_TIMEOUT        = 2     -- rednet.lookup timeout
 
 Constants.UPDATE_POLL_INTERVAL      = 300   -- 5 minutes
 Constants.NOTIF_POLL_INTERVAL       = 30    -- 30 seconds

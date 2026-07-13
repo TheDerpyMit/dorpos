@@ -70,10 +70,13 @@ end
 local convos  = load("convos")
 -- offline[userId] = { list of pending messages }
 local offline = load("offline")
-
-local _msgId = 0
+-- Persist msgId counter so IDs are globally unique across restarts
+local _meta   = load("msg_meta")
+local _msgId  = _meta.lastMsgId or 0
 local function nextMsgId()
     _msgId = _msgId + 1
+    _meta.lastMsgId = _msgId
+    save("msg_meta", _meta)
     return _msgId
 end
 
@@ -140,18 +143,20 @@ server.route("/messages/send", function(clientId, req)
     table.insert(convos[convoId].messages, msg)
     save("convos", convos)
 
-    -- Queue for offline recipients (keyed by username)
+    -- Queue for offline recipients and send real-time push.
+    -- NOTE: we do NOT push back to the sender — they already inserted it locally.
     local accounts = loadAccounts()
     for _, participant in ipairs(convos[convoId].participants) do
         if participant ~= fromName then
+            -- Offline queue (cleared on /messages/poll)
             offline[participant] = offline[participant] or {}
             table.insert(offline[participant], {
                 type    = "message",
                 convoId = convoId,
                 msg     = msg,
             })
-            
-            -- Real-time push
+
+            -- Real-time push to recipient only
             local targetUser = accounts[participant]
             if targetUser and targetUser.deviceId then
                 rednet.send(targetUser.deviceId, {

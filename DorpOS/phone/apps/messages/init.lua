@@ -1,6 +1,10 @@
 --[[  DorpOS :: phone/apps/messages/init.lua
     Messages app — DMs and group chats via the Messages server.
     Features: conversation list, chat view, typing indicator, read receipts.
+
+    Input: real keyboard only (char / key events). No on-screen keyboard.
+    Dedup: messages inserted locally with server-returned ID; real-time push
+           is skipped if the ID is already present in chatMessages.
 ]]
 local C       = require("shared.constants")
 local ui      = require("system.ui.ui")
@@ -11,7 +15,6 @@ local notif   = require("system.services.notification_manager")
 local utils   = require("system.utils.utils")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
-local kbComp = require("system.ui.components.keyboard")
 
 -- ─────────────────────────────────────────────────────────────
 -- State
@@ -19,23 +22,46 @@ local kbComp = require("system.ui.components.keyboard")
 
 local userStore  = Storage.open("user_config")
 local myUsername = userStore.get("username", "me")
--- Refresh username at runtime in case it was just set by the wizard
 if myUsername == "me" or myUsername == "" then
     myUsername = userStore.get("username", "me")
 end
 
 local msgCache   = Storage.open("msg_cache")
-local convos     = msgCache.get("convos", {})   -- list of { id, name, messages=[], unread }
-local view          = "list"  -- "list" | "chat" | "newconvo"
+local convos     = msgCache.get("convos", {})
+local view          = "list"
 local activeConvo   = nil
 local composeText   = ""
-local shifted       = false
-local kbHits        = nil
 local chatScroll    = 0
 local listScroll    = 1
-local newConvoMode  = false
 local newConvoTarget = ""
-local friendsList   = {}  -- cached from accounts server
+local friendsList   = {}
+local newConvoStatus    = ""
+local newConvoStatusOk  = true
+local friendPickHits    = {}
+
+-- Chat messages for the active conversation (local cache)
+local chatMessages = {}
+
+-- Timer handle for auto-refresh
+local _refreshTimer = nil
+local _REFRESH_INTERVAL = 5  -- seconds
+
+-- ─────────────────────────────────────────────────────────────
+-- Helpers
+-- ─────────────────────────────────────────────────────────────
+
+local function startRefreshTimer()
+    _refreshTimer = os.startTimer(_REFRESH_INTERVAL)
+end
+
+--- Check if a messageId already exists in chatMessages (dedup guard)
+local function msgIdExists(id)
+    if not id then return false end
+    for _, m in ipairs(chatMessages) do
+        if m.id == id then return true end
+    end
+    return false
+end
 
 -- ─────────────────────────────────────────────────────────────
 -- Server communication
@@ -43,7 +69,7 @@ local friendsList   = {}  -- cached from accounts server
 
 local function fetchConvos()
     local ok, resp = net.post(C.HOST_MESSAGES, "/messages/conversations", {})
-    if ok and resp.body.conversations then
+    if ok and resp.body and resp.body.conversations then
         convos = resp.body.conversations
         msgCache.set("convos", convos)
         msgCache.save()
@@ -53,14 +79,15 @@ end
 local function fetchMessages(convoId)
     local ok, resp = net.post(C.HOST_MESSAGES, "/messages/history", {
         convoId = convoId,
-        limit   = 50,
+        limit   = 60,
     })
-    if ok and resp.body.messages then
+    if ok and resp.body and resp.body.messages then
         return resp.body.messages
     end
     return nil
 end
 
+--- Send a message. Returns (ok, serverMessageId).
 local function sendMessage(convoId, text)
     local ok, resp = net.post(C.HOST_MESSAGES, "/messages/send", {
         convoId = convoId,
@@ -71,7 +98,6 @@ local function sendMessage(convoId, text)
         return true, resp.body.messageId
     end
     if not ok then
-        -- Queue for offline delivery
         net.queue(C.HOST_MESSAGES, "/messages/send", {
             convoId = convoId, text = text, from = myUsername,
         })
@@ -79,8 +105,6 @@ local function sendMessage(convoId, text)
     return ok, nil
 end
 
--- Check if a username exists on the accounts server.
--- Returns the canonical (lowercase) username or nil.
 local function lookupUser(username)
     local ok, resp = net.postAnon(C.HOST_ACCOUNTS, "/account/lookup", {
         username = username:lower()
@@ -95,7 +119,7 @@ local function startConvo(targetUsername)
     local ok, resp = net.post(C.HOST_MESSAGES, "/messages/start", {
         with = targetUsername,
     })
-    if ok then
+    if ok and resp.body then
         return resp.body.convoId
     end
     return nil
@@ -109,8 +133,31 @@ local function fetchFriends()
 end
 
 -- ─────────────────────────────────────────────────────────────
+-- Loading indicator helpers
+-- ─────────────────────────────────────────────────────────────
+
+local function showStatus(msg, row, color)
+    local t = Theme.get()
+    row = row or (H - 2)
+    term.setCursorPos(1, row)
+    term.setBackgroundColor(t.bg)
+    term.setTextColor(color or t.textMuted)
+    term.write(utils.padRight("  " .. msg, W))
+end
+
+local function clearStatus(row)
+    local t = Theme.get()
+    row = row or (H - 2)
+    term.setCursorPos(1, row)
+    term.setBackgroundColor(t.bg)
+    term.write(string.rep(" ", W))
+end
+
+-- ─────────────────────────────────────────────────────────────
 -- Conversation list view
 -- ─────────────────────────────────────────────────────────────
+
+local _listHits = {}
 
 local function drawList()
     local t = Theme.get()
@@ -123,120 +170,101 @@ local function drawList()
     term.write(title .. string.rep(" ", W - #title - #btn) .. btn)
 
     local listH = H - 2
-    local _hits = {}
+    _listHits = {}
 
     if #convos == 0 then
-        ui.write(2, 5, "No messages yet.", t.textMuted, t.bg)
-        ui.write(2, 6, "Tap [+] to start a chat.", t.textMuted, t.bg)
+        ui.write(2, 4, "No messages yet.", t.textMuted, t.bg)
+        ui.write(2, 5, "Tap [+] to start a chat.", t.textMuted, t.bg)
     else
         for i = listScroll, math.min(listScroll + listH - 1, #convos) do
             local c   = convos[i]
             local ry  = 2 + (i - listScroll)
-            local bg  = t.bg
-            local fg  = t.text
             term.setCursorPos(1, ry)
-            term.setBackgroundColor(bg)
-            term.setTextColor(fg)
+            term.setBackgroundColor(t.bg)
+            term.setTextColor(t.text)
+            local preview = ""
+            if c.lastMsg and #c.lastMsg > 0 then
+                preview = ": " .. utils.truncate(c.lastMsg, 12)
+            end
             local unreadStr = (c.unread and c.unread > 0) and (" (" .. c.unread .. ")") or ""
-            term.write(utils.padRight("  " .. utils.truncate(c.name or c.id, W - 6) .. unreadStr, W))
+            term.write(utils.padRight(
+                "  " .. utils.truncate((c.name or c.id), W - 6) .. unreadStr, W))
             if c.unread and c.unread > 0 then
                 term.setCursorPos(W - 3, ry)
                 term.setBackgroundColor(t.accent)
                 term.setTextColor(t.textOnAccent)
                 term.write(tostring(c.unread))
             end
-            table.insert(_hits, { y = ry, convo = c })
+            table.insert(_listHits, { y = ry, convo = c })
         end
     end
 
-    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
-    ui.button({ x = 9, y = H, width = 8, label = "Refresh", style = "ghost" })
-    return _hits
+    ui.button({ x = 1,  y = H, width = 3, label = "<",       style = "ghost" })
+    ui.button({ x = 9,  y = H, width = 8, label = "Refresh",  style = "ghost" })
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Chat view
 -- ─────────────────────────────────────────────────────────────
 
-local chatMessages = {}
-
 local function drawChat()
     local t     = Theme.get()
-    local kbY   = H - 7
-    local chatH = kbY - 3
+    local chatH = H - 3  -- rows 2 .. H-2 for messages; H-1 = compose; H = back
 
     ui.clear()
     term.setCursorPos(1, 1)
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
-    -- Show "< Name" so user knows left side = back
-    term.write(utils.padRight(" < " .. utils.truncate(activeConvo.name or "Chat", W - 3), W))
+    term.write(utils.padRight(" < " .. utils.truncate(activeConvo.name or "Chat", W - 4), W))
 
-    -- Messages
-    -- Build line list from messages
+    -- Build line list
     local lines = {}
     for _, msg in ipairs(chatMessages) do
         local isMe = msg.from == myUsername
         local prefix = isMe and "You: " or (msg.from .. ": ")
         local wrapped = utils.wrap(prefix .. msg.text, W - 2)
         for j, line in ipairs(wrapped) do
-            table.insert(lines, { text = line, isMe = isMe, first = (j == 1), msg = msg })
+            table.insert(lines, { text = line, isMe = isMe })
         end
-        table.insert(lines, { text = "", isMe = false, sep = true })
     end
 
-    local visStart = math.max(1, #lines - chatH - chatScroll)
+    -- Render visible lines
+    local visStart = math.max(1, #lines - chatH + 1 - chatScroll)
     local row = 2
-    for i = visStart, math.min(visStart + chatH, #lines) do
+    for i = visStart, math.min(visStart + chatH - 1, #lines) do
         local l = lines[i]
-        if not l.sep then
-            term.setCursorPos(1, row)
-            term.setBackgroundColor(t.bg)
-            term.setTextColor(l.isMe and t.accent or t.text)
-            term.write(utils.padRight(l.text, W))
-        end
+        term.setCursorPos(1, row)
+        term.setBackgroundColor(t.bg)
+        term.setTextColor(l.isMe and t.accent or t.text)
+        term.write(utils.padRight(l.text, W))
         row = row + 1
     end
 
-    -- Compose bar
-    term.setCursorPos(1, kbY - 1)
+    -- Compose bar (row H-1)
+    term.setCursorPos(1, H - 1)
     term.setBackgroundColor(t.bgInput)
     term.setTextColor(t.text)
-    term.write(utils.padRight(composeText == "" and "Type a message..." or composeText, W - 5))
+    local displayText = #composeText > 0 and composeText or "Type a message..."
+    term.write(utils.padRight(displayText, W - 5))
     term.setBackgroundColor(t.accent)
     term.setTextColor(t.textOnAccent)
     term.write("[>>]")
+    -- Show cursor
+    if #composeText > 0 then
+        local cx = math.min(#composeText + 1, W - 5)
+        term.setCursorPos(cx, H - 1)
+        term.setCursorBlink(true)
+    else
+        term.setCursorBlink(false)
+    end
 
-    -- Keyboard
-    kbHits = kbComp.draw({
-        y = kbY, shifted = shifted,
-        onChar  = function(c) composeText = composeText .. c end,
-        onBack  = function()
-            if #composeText > 0 then composeText = composeText:sub(1, -2) end
-        end,
-        onEnter = function()
-            if #composeText > 0 then
-                sendMessage(activeConvo.id, composeText)
-                table.insert(chatMessages, {
-                    from = myUsername, text = composeText,
-                    timestamp = os.epoch("utc"), sent = true,
-                })
-                composeText = ""
-            end
-        end,
-        onShift = function() shifted = not shifted end,
-        onClose = function() view = "list" end,
-    })
+    -- Back button (always visible)
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 -- ─────────────────────────────────────────────────────────────
--- New conversation dialog
+-- New conversation view
 -- ─────────────────────────────────────────────────────────────
-
--- Status message shown inside the new-convo screen
-local newConvoStatus = ""
-local newConvoStatusOk = true
-local friendPickHits = {}
 
 local function drawNewConvo()
     local t = Theme.get()
@@ -246,11 +274,10 @@ local function drawNewConvo()
     term.setTextColor(t.textOnAccent)
     term.write(utils.padRight(" < New Message", W))
 
-    -- ── Friends picker ──────────────────────────────────────
     friendPickHits = {}
     if #friendsList > 0 then
-        ui.write(2, 3, "Send to a friend:", t.textMuted, t.bg)
-        local maxShow = math.min(#friendsList, H - 12)
+        ui.write(2, 3, "Friends (tap to chat):", t.textMuted, t.bg)
+        local maxShow = math.min(#friendsList, H - 8)
         for i = 1, maxShow do
             local f  = friendsList[i]
             local ry = 3 + i
@@ -261,117 +288,144 @@ local function drawNewConvo()
             table.insert(friendPickHits, { y = ry, username = f.username })
         end
     else
-        ui.write(2, 4, "No friends yet.", t.textMuted, t.bg)
-        ui.write(2, 5, "Add friends in the", t.textMuted, t.bg)
-        ui.write(2, 6, "Friends app first,", t.textMuted, t.bg)
-        ui.write(2, 7, "or type a username below.", t.textMuted, t.bg)
+        ui.write(2, 3, "No friends yet.", t.textMuted, t.bg)
+        ui.write(2, 4, "Add friends in Contacts", t.textMuted, t.bg)
+        ui.write(2, 5, "or type a username below.", t.textMuted, t.bg)
     end
 
-    -- ── Username fallback text box ──────────────────────────
-    local inputY = H - 9
+    local inputY = H - 4
     ui.divider(inputY - 1)
-    ui.write(2, inputY, "Or type @username:", t.textMuted, t.bg)
+    ui.write(2, inputY, "Or type @username + Enter:", t.textMuted, t.bg)
     ui.textbox({ x = 2, y = inputY + 1, width = W - 3, value = newConvoTarget,
-                 focused = (#friendsList == 0), placeholder = "username" })
+                 focused = true, placeholder = "username" })
 
     if newConvoStatus ~= "" then
         local fg = newConvoStatusOk and t.success or t.danger
         ui.write(2, inputY + 2, utils.truncate(newConvoStatus, W - 2), fg, t.bg)
     end
 
-    kbHits = kbComp.draw({
-        y = H - 7, shifted = shifted,
-        onChar  = function(c) newConvoTarget = newConvoTarget .. c; newConvoStatus = "" end,
-        onBack  = function()
-            if #newConvoTarget > 0 then
-                newConvoTarget = newConvoTarget:sub(1, -2)
-                newConvoStatus = ""
-            end
-        end,
-        onEnter = function()
-            local target = newConvoTarget:lower()
-            if #target == 0 then return end
-            if target == myUsername:lower() then
-                newConvoStatus = "That's you!"
-                newConvoStatusOk = false
-                return
-            end
-            newConvoStatus = "Checking..."
-            newConvoStatusOk = true
-            local canonical = lookupUser(target)
-            if not canonical then
-                newConvoStatus = "User '" .. target .. "' not found!"
-                newConvoStatusOk = false
-                return
-            end
-            local id = startConvo(canonical)
-            if id then
-                local found = false
-                for _, c in ipairs(convos) do if c.id == id then found = true end end
-                if not found then
-                    table.insert(convos, { id = id, name = canonical, messages = {}, unread = 0 })
-                    msgCache.set("convos", convos); msgCache.save()
-                end
-                for _, c in ipairs(convos) do
-                    if c.id == id then activeConvo = c; break end
-                end
-                fetchConvos()
-                for _, c in ipairs(convos) do
-                    if c.id == id then activeConvo = c; break end
-                end
-                chatMessages = fetchMessages(id) or {}
-                newConvoMode   = false
-                newConvoStatus = ""
-                view = "chat"
-            else
-                newConvoStatus = "Could not start chat."
-                newConvoStatusOk = false
-            end
-        end,
-        onShift = function() shifted = not shifted end,
-        onClose = function()
-            newConvoMode   = false
-            newConvoStatus = ""
-            view = "list"
-        end,
-    })
+    ui.button({ x = 1, y = H, width = 3, label = "<", style = "ghost" })
 end
 
 -- ─────────────────────────────────────────────────────────────
--- Main loop
+-- Actions
 -- ─────────────────────────────────────────────────────────────
 
--- Initial fetch
-fetchConvos()
-fetchFriends()
+local function doSendMessage()
+    if #composeText == 0 then return end
+    local text = composeText
+    composeText = ""
 
--- Handle openWith argument from other apps
-if ARGS and ARGS.openWith then
-    local target = ARGS.openWith:lower()
-    local id = startConvo(target)
+    -- Show sending indicator
+    local t = Theme.get()
+    term.setCursorPos(1, H - 1)
+    term.setBackgroundColor(t.bgInput)
+    term.setTextColor(t.textMuted)
+    term.write(utils.padRight("  / Sending...", W - 5))
+    term.setCursorBlink(false)
+
+    local ok, msgId = sendMessage(activeConvo.id, text)
+
+    -- Insert locally with the server-returned ID (dedup key)
+    -- If server returned no ID (offline), use a local sentinel
+    local localId = msgId or ("local_" .. os.epoch("utc") .. "_" .. math.random(1000))
+    if not msgIdExists(localId) then
+        table.insert(chatMessages, {
+            id        = localId,
+            from      = myUsername,
+            text      = text,
+            timestamp = os.epoch("utc"),
+        })
+    end
+
+    drawChat()
+end
+
+local function doStartConvoFromUsername()
+    local target = newConvoTarget:lower()
+    if #target == 0 then return end
+    if target == myUsername:lower() then
+        newConvoStatus    = "That's you!"
+        newConvoStatusOk  = false
+        drawNewConvo()
+        return
+    end
+
+    newConvoStatus    = "/ Looking up user..."
+    newConvoStatusOk  = true
+    drawNewConvo()
+
+    local canonical = lookupUser(target)
+    if not canonical then
+        newConvoStatus    = "User '" .. target .. "' not found!"
+        newConvoStatusOk  = false
+        drawNewConvo()
+        return
+    end
+
+    newConvoStatus    = "/ Starting chat..."
+    newConvoStatusOk  = true
+    drawNewConvo()
+
+    local id = startConvo(canonical)
     if id then
         local found = false
         for _, c in ipairs(convos) do if c.id == id then found = true end end
         if not found then
-            table.insert(convos, { id = id, name = target, messages = {}, unread = 0 })
+            table.insert(convos, { id = id, name = canonical, messages = {}, unread = 0 })
             msgCache.set("convos", convos); msgCache.save()
         end
+        fetchConvos()
         for _, c in ipairs(convos) do
             if c.id == id then activeConvo = c; break end
         end
-        chatMessages = fetchMessages(id) or {}
+        chatMessages  = fetchMessages(id) or {}
+        chatScroll    = 0
+        newConvoStatus = ""
+        newConvoTarget = ""
         view = "chat"
+        drawChat()
+        startRefreshTimer()
+    else
+        newConvoStatus    = "Could not start chat."
+        newConvoStatusOk  = false
+        drawNewConvo()
     end
 end
 
-local _hits = view == "list" and drawList() or drawChat()
+local function openConvo(c)
+    activeConvo  = c
+    showStatus("/ Loading messages...", H - 2)
+    chatMessages = fetchMessages(c.id) or {}
+    chatScroll   = 0
+    c.unread     = 0
+    view         = "chat"
+    drawChat()
+    startRefreshTimer()
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Main loop — initial fetch
+-- ─────────────────────────────────────────────────────────────
+
+showStatus("/ Loading conversations...", H - 2)
+fetchConvos()
+fetchFriends()
+drawList()
+
+-- ─────────────────────────────────────────────────────────────
+-- Event loop
+-- ─────────────────────────────────────────────────────────────
 
 while true do
     local ev = { os.pullEvent() }
     local name = ev[1]
+
+    -- ── Real-time push (incoming message from server) ────────
     if name == "dorpos_message_received" then
         local p = ev[2]
-        if p.convoId then
+        if p and p.convoId and p.msg then
+            -- Update convo list
             local foundConvo = false
             for _, c in ipairs(convos) do
                 if c.id == p.convoId then
@@ -386,105 +440,123 @@ while true do
             end
             if not foundConvo then fetchConvos() end
 
+            -- Dedup: only insert if we don't already have this ID
             if view == "chat" and activeConvo and activeConvo.id == p.convoId then
-                local dup = false
-                for _, m in ipairs(chatMessages) do
-                    if m.id == p.msg.id then dup = true; break end
-                end
-                if not dup then
+                if not msgIdExists(p.msg.id) then
                     table.insert(chatMessages, p.msg)
                     drawChat()
                 end
             elseif view == "list" then
-                _hits = drawList()
+                drawList()
             end
         end
     end
 
+    -- ── Auto-refresh timer ───────────────────────────────────
+    if name == "timer" and ev[2] == _refreshTimer then
+        if view == "chat" and activeConvo then
+            -- Silently refresh messages in background
+            local fresh = fetchMessages(activeConvo.id)
+            if fresh then
+                -- Merge: add any new IDs we don't have
+                local changed = false
+                for _, m in ipairs(fresh) do
+                    if not msgIdExists(m.id) then
+                        table.insert(chatMessages, m)
+                        changed = true
+                    end
+                end
+                if changed then drawChat() end
+            end
+        elseif view == "list" then
+            fetchConvos()
+            drawList()
+        end
+        startRefreshTimer()
+    end
+
+    -- ── LIST view ─────────────────────────────────────────────
     if view == "list" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if my == H and mx <= 3 then return end
+            if my == H and mx <= 3 then return end  -- back = exit app
             if my == H and mx >= 9 and mx <= 16 then
-                fetchConvos(); _hits = drawList()
-            end
-            if my == 1 and mx >= W - 2 then
+                showStatus("/ Refreshing...", H - 2)
+                fetchConvos()
+                drawList()
+            elseif my == 1 and mx >= W - 2 then
                 -- New conversation
                 newConvoTarget = ""
-                newConvoMode   = true
-                view           = "newconvo"
+                newConvoStatus = ""
+                view = "newconvo"
                 drawNewConvo()
             else
-                for _, h in ipairs(_hits) do
+                for _, h in ipairs(_listHits) do
                     if my == h.y then
-                        activeConvo  = h.convo
-                        chatMessages = fetchMessages(h.convo.id) or {}
-                        chatScroll   = 0
-                        h.convo.unread = 0
-                        view = "chat"
-                        drawChat()
+                        openConvo(h.convo)
                         break
                     end
                 end
             end
         elseif name == "mouse_scroll" then
             listScroll = math.max(1, listScroll + ev[2])
-            _hits = drawList()
+            drawList()
         end
 
+    -- ── CHAT view ─────────────────────────────────────────────
     elseif view == "chat" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            if kbHits and kbComp.handleClick(kbHits, mx, my) then
-                drawChat()
-            elseif my == 1 and mx <= 3 then
-                view = "list"; _hits = drawList()
-            else
-                -- Send on clicking send button
-                local kbY = H - 7
-                if my == kbY - 1 and mx >= W - 4 then
-                    if #composeText > 0 then
-                        local ok, mId = sendMessage(activeConvo.id, composeText)
-                        table.insert(chatMessages, {
-                            id   = mId or ("local_" .. os.epoch("utc")),
-                            from = myUsername, text = composeText,
-                            timestamp = os.epoch("utc"),
-                        })
-                        composeText = ""
-                        drawChat()
-                    end
-                end
+            -- Back arrow in header
+            if my == 1 and mx <= 3 then
+                if _refreshTimer then _refreshTimer = nil end
+                view = "list"
+                fetchConvos()
+                drawList()
+            -- Send button [>>]
+            elseif my == H - 1 and mx >= W - 4 then
+                doSendMessage()
+            -- Back button row H
+            elseif my == H and mx <= 3 then
+                if _refreshTimer then _refreshTimer = nil end
+                view = "list"
+                fetchConvos()
+                drawList()
             end
         elseif name == "char" then
-            composeText = composeText .. ev[2]; drawChat()
+            composeText = composeText .. ev[2]
+            drawChat()
         elseif name == "key" then
             local key = ev[2]
             if key == keys.backspace and #composeText > 0 then
-                composeText = composeText:sub(1, -2); drawChat()
-            elseif key == keys.enter and #composeText > 0 then
-                local ok, mId = sendMessage(activeConvo.id, composeText)
-                table.insert(chatMessages, { id = mId or ("local_" .. os.epoch("utc")), from = myUsername, text = composeText, timestamp = os.epoch("utc") })
-                composeText = ""; drawChat()
+                composeText = composeText:sub(1, -2)
+                drawChat()
+            elseif key == keys.enter then
+                doSendMessage()
             end
         elseif name == "mouse_scroll" then
             chatScroll = math.max(0, chatScroll - ev[2])
             drawChat()
         end
 
+    -- ── NEW CONVO view ────────────────────────────────────────
     elseif view == "newconvo" then
         if name == "mouse_click" then
             local mx, my = ev[3], ev[4]
-            -- Tap header row = back to list
-            if my == 1 then
-                newConvoMode   = false
+            -- Header tap or back button = back to list
+            if (my == 1) or (my == H and mx <= 3) then
                 newConvoStatus = ""
+                newConvoTarget = ""
                 view = "list"
+                drawList()
             else
-                -- Check friend pick hits first
+                -- Friend pick
                 local pickedFriend = false
                 for _, h in ipairs(friendPickHits) do
                     if my == h.y then
-                        -- Open chat with this friend directly
+                        newConvoStatus    = "/ Starting chat..."
+                        newConvoStatusOk  = true
+                        drawNewConvo()
                         local id = startConvo(h.username)
                         if id then
                             local found = false
@@ -496,37 +568,39 @@ while true do
                             for _, c in ipairs(convos) do
                                 if c.id == id then activeConvo = c; break end
                             end
-                            chatMessages = fetchMessages(id) or {}
-                            newConvoMode = false
+                            chatMessages  = fetchMessages(id) or {}
+                            chatScroll    = 0
+                            newConvoStatus = ""
                             view = "chat"
+                            drawChat()
+                            startRefreshTimer()
                         end
                         pickedFriend = true
                         break
                     end
                 end
-                if not pickedFriend and kbHits then
-                    kbComp.handleClick(kbHits, mx, my)
+                if not pickedFriend then
+                    drawNewConvo()
                 end
             end
-            if view == "newconvo" then drawNewConvo() end
         elseif name == "char" then
             newConvoTarget = newConvoTarget .. ev[2]
             newConvoStatus = ""
-            if view == "newconvo" then drawNewConvo() end
+            drawNewConvo()
         elseif name == "key" then
-            if ev[2] == keys.backspace and #newConvoTarget > 0 then
+            local key = ev[2]
+            if key == keys.backspace and #newConvoTarget > 0 then
                 newConvoTarget = newConvoTarget:sub(1, -2)
                 newConvoStatus = ""
-                if view == "newconvo" then drawNewConvo() end
+                drawNewConvo()
+            elseif key == keys.enter then
+                doStartConvoFromUsername()
+            elseif key == keys.escape then
+                newConvoStatus = ""
+                newConvoTarget = ""
+                view = "list"
+                drawList()
             end
-        end
-
-        -- Handle view transitions triggered by keyboard callbacks
-        if view == "chat" then
-            chatScroll = 0
-            drawChat()
-        elseif view == "list" then
-            _hits = drawList()
         end
     end
 end

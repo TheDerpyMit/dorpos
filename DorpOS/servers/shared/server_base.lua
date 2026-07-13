@@ -24,13 +24,27 @@ package.path = "/?.lua;/?/init.lua;" .. package.path
 local proto = require("shared.protocol")
 local C     = require("shared.constants")
 
+-- Dashboard (optional — silently fails if not present)
+local _dash = nil
+pcall(function()
+    _dash = require("servers.shared.monitor_dashboard")
+end)
+
 -- ─────────────────────────────────────────────────────────────
 -- Logging (inline — servers may not have the phone logger)
 -- ─────────────────────────────────────────────────────────────
 
 local function log(tag, msg)
     local ts = os.epoch("utc")
-    print(string.format("[%d] [%s] %s", ts, tag, msg))
+    local line = string.format("[%d] [%s] %s", ts, tag, msg)
+    print(line)
+    if _dash then
+        local level = "info"
+        if msg:find("[Ee]rror") or msg:find("crash") then level = "error"
+        elseif msg:find("[Ww]arn")  then level = "warn" end
+        _dash.log(tag, level, msg)
+        _dash.redraw()
+    end
 end
 
 -- ─────────────────────────────────────────────────────────────
@@ -79,6 +93,12 @@ function Base.new(hostname, name)
     math.randomseed(os.getComputerID() * 9001 + os.epoch("utc") % 100000)
 
     server._secret = loadSecret()
+
+    -- Register with the monitor dashboard
+    if _dash then
+        _dash.register(name)
+        _dash.redraw()
+    end
 
     -- Load token module
     local ok, tok = pcall(require, "system.crypto.token")
@@ -164,14 +184,33 @@ function Base.new(hostname, name)
                 if belongs then
                     local handler = server._routes[req.endpoint]
                     if handler then
+                        -- Track in-flight request on dashboard
+                        if _dash then
+                            local s = _dash._stats and _dash._stats[name]
+                            -- show "handling..." label immediately
+                        end
                         local ok3, err = pcall(handler, clientId, req)
                         if not ok3 then
                             log(name, "Handler error on " .. req.endpoint .. ": " .. tostring(err))
                             proto.respondServerError(clientId, req, tostring(err))
+                            if _dash then
+                                _dash.request(name, req.endpoint, 500)
+                                _dash.redraw()
+                            end
+                        else
+                            if _dash then
+                                -- We don't have the code here, mark as 200
+                                _dash.request(name, req.endpoint, 200)
+                                _dash.redraw()
+                            end
                         end
                     else
                         log(name, "Unknown endpoint: " .. tostring(req.endpoint))
                         proto.respondError(clientId, req, 404, "Endpoint not found: " .. tostring(req.endpoint))
+                        if _dash then
+                            _dash.request(name, req.endpoint or "?", 404)
+                            _dash.redraw()
+                        end
                     end
                 end
             end

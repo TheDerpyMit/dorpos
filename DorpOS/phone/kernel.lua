@@ -30,7 +30,6 @@ local notif   = require("system.services.notification_manager")
 local updater = require("system.services.updater")
 local appMgr  = require("system.services.app_manager")
 local utils   = require("system.utils.utils")
-local anim    = require("system.animation.animation")
 
 local W, H = C.SCREEN_WIDTH, C.SCREEN_HEIGHT
 
@@ -105,25 +104,22 @@ end
 
 local function showNotifBanner(n)
     local t = Theme.get()
-    local drawBg = function()
-        -- We don't redraw the app bg — just clear the banner row
-        term.setCursorPos(1, 1)
-        term.setBackgroundColor(t.bg)
-        term.write(string.rep(" ", W))
-        term.setCursorPos(1, 2)
-        term.write(string.rep(" ", W))
-    end
-    local drawToast = function()
-        term.setCursorPos(1, 1)
-        term.setBackgroundColor(t.accent)
-        term.setTextColor(t.textOnAccent)
-        term.write(utils.padRight(" " .. (n.title or ""), W))
-        term.setCursorPos(1, 2)
-        term.setBackgroundColor(t.bgCard)
-        term.setTextColor(t.text)
-        term.write(utils.padRight(" " .. utils.truncate(n.body or "", W - 2), W))
-    end
-    anim.toast(drawBg, drawToast, 2.5)
+    -- Draw banner instantly on rows 1-2
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(t.accent)
+    term.setTextColor(t.textOnAccent)
+    term.write(utils.padRight(" " .. (n.title or ""), W))
+    term.setCursorPos(1, 2)
+    term.setBackgroundColor(t.bgCard)
+    term.setTextColor(t.text)
+    term.write(utils.padRight(" " .. utils.truncate(n.body or "", W - 2), W))
+    os.sleep(1.5)
+    -- Clear the banner rows (app will redraw on next event)
+    term.setCursorPos(1, 1)
+    term.setBackgroundColor(t.bg)
+    term.write(string.rep(" ", W))
+    term.setCursorPos(1, 2)
+    term.write(string.rep(" ", W))
 end
 
 -- ─────────────────────────────────────────────────────────────
