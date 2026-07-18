@@ -91,8 +91,63 @@ local function txt()
 	end
     while true do
         local w,h = term.getSize()
-        a[1].width = isPrinterMode and math.min(w-1, 25) or w-1
+        a[1].width = w-1
         a[1].height = h-4
+        
+        if isPrinterMode then
+            local lines = a[1].lines
+            local lineIdx = 1
+            local cursorCol = a[4] or 1
+            local cursorLine = a[5] or 1
+            
+            while lineIdx <= #lines do
+                local line = lines[lineIdx]
+                if #line > 25 then
+                    local spacePos = nil
+                    for i = 25, 1, -1 do
+                        if string.sub(line, i, i) == " " then
+                            spacePos = i
+                            break
+                        end
+                    end
+                    
+                    local part1, part2
+                    if spacePos then
+                        part1 = string.sub(line, 1, spacePos)
+                        part2 = string.sub(line, spacePos + 1)
+                        
+                        if lineIdx == cursorLine then
+                            if cursorCol > spacePos then
+                                cursorLine = lineIdx + 1
+                                cursorCol = cursorCol - spacePos
+                            end
+                        elseif lineIdx < cursorLine then
+                            cursorLine = cursorLine + 1
+                        end
+                    else
+                        part1 = string.sub(line, 1, 25)
+                        part2 = string.sub(line, 26)
+                        
+                        if lineIdx == cursorLine then
+                            if cursorCol > 25 then
+                                cursorLine = lineIdx + 1
+                                cursorCol = cursorCol - 25
+                            end
+                        elseif lineIdx < cursorLine then
+                            cursorLine = cursorLine + 1
+                        end
+                    end
+                    
+                    lines[lineIdx] = part1
+                    table.insert(lines, lineIdx + 1, part2)
+                    a[1].changed = true
+                end
+                lineIdx = lineIdx + 1
+            end
+            
+            a[5] = cursorLine
+            a[4] = cursorCol
+        end
         
         local textCol = tCol.txt
         a[1].sTable = {
