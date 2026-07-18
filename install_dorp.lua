@@ -38,6 +38,30 @@ end
 local isHighlightEnabled = true
 local isPrinterMode = false
 
+local myProc = lOS.getRunningProcess()
+local opullEvent = os.pullEvent
+local hijacked = false
+
+function _G.os.pullEvent(filter)
+    local currentProc = lOS.getRunningProcess()
+    if currentProc == myProc then
+        if hijacked then
+            hijacked = false
+            return "mouse_click", 1, -999, -999
+        end
+        
+        local event, button, x, y = opullEvent(filter)
+        
+        if isPrinterMode and (event == "char" or event == "key" or event == "paste") then
+            hijacked = true
+        end
+        
+        return event, button, x, y
+    else
+        return opullEvent(filter)
+    end
+end
+
 local theme = config.themes[config.current]
 local tCol = {
     bg = theme.bg,
@@ -46,7 +70,7 @@ local tCol = {
     misc2 = theme.misc2
 }
 
-local btns = {{"File",{{"New","New window","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},{"Time"}}},{"View",{"Theme Editor", "Highlighting: On", "Printer Mode: Off"}}}
+local btns = {{"File",{{"New","New window","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},"Center Align","Time"}},{"View",{"Theme Editor", "Highlighting: On", "Printer Mode: Off"}}}
 
 local function topbar()
     local w,h = term.getSize()
@@ -141,6 +165,37 @@ local function txt()
                     lines[lineIdx] = part1
                     table.insert(lines, lineIdx + 1, part2)
                     a[1].changed = true
+                else
+                    local nextLine = lines[lineIdx + 1]
+                    if nextLine and #line < 25 then
+                        local firstWord = string.match(nextLine, "^[^%s]+")
+                        if firstWord and #line + #firstWord + 1 <= 25 then
+                            lines[lineIdx] = line .. (line:sub(-1) == " " and "" or " ") .. firstWord
+                            lines[lineIdx + 1] = string.sub(nextLine, #firstWord + 1):gsub("^%s+", "")
+                            
+                            if lines[lineIdx + 1] == "" and #lines > lineIdx + 1 then
+                                table.remove(lines, lineIdx + 1)
+                                if cursorLine > lineIdx + 1 then
+                                    cursorLine = cursorLine - 1
+                                end
+                            end
+                            
+                            if cursorLine == lineIdx + 1 then
+                                if cursorCol <= #firstWord + 1 then
+                                    cursorLine = lineIdx
+                                    cursorCol = #line + (line:sub(-1) == " " and 0 or 1) + cursorCol
+                                else
+                                    cursorCol = cursorCol - #firstWord
+                                    local diff = #nextLine - #lines[lineIdx + 1] - #firstWord
+                                    cursorCol = cursorCol - diff
+                                end
+                            elseif cursorLine > lineIdx + 1 then
+                                cursorLine = cursorLine - 1
+                            end
+                            a[1].changed = true
+                            lineIdx = lineIdx - 1
+                        end
+                    end
                 end
                 lineIdx = lineIdx + 1
             end
@@ -171,6 +226,19 @@ local function txt()
 end
 
 _G.thetxtfunction = txt
+
+local function centerAlignLine(lineIdx)
+    local line = a[1].lines[lineIdx]
+    if not line then return end
+    
+    local text = line:gsub("^%s+", ""):gsub("%s+$", "")
+    local targetWidth = isPrinterMode and 25 or (w - 1)
+    
+    local pad = math.max(0, math.floor((targetWidth - #text) / 2))
+    a[1].lines[lineIdx] = string.rep(" ", pad) .. text
+    a[1].changed = true
+    a[4] = pad + #text + 1
+end
 
 local function save()
     if tFilepath == "" then
@@ -431,6 +499,10 @@ function regevents()
                                 a[1].lines[line] = string.sub(a[1].lines[line], 1, col-1) .. timeStr .. string.sub(a[1].lines[line], col)
                                 a[4] = col + #timeStr
                                 a[1].changed = true
+                                coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                            elseif b[3] == "Center Align" then
+                                local line = a[5] or 1
+                                centerAlignLine(line)
                                 coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
 							elseif b[3] == "Theme Editor" then
                                 lUtils.openWin("Theme Editor", "Program_Files/Notepad++/theme_editor.lua", 5, 5, 34, 15, true)
