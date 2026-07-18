@@ -35,7 +35,8 @@ local function loadThemeConfig()
         f.close()
     end
 end
-loadThemeConfig()
+local isHighlightEnabled = true
+local isPrinterMode = false
 
 local theme = config.themes[config.current]
 local tCol = {
@@ -45,7 +46,7 @@ local tCol = {
     misc2 = theme.misc2
 }
 
-local btns = {{"File",{{"New","New window","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},{"Time"}}},{"View",{"Theme Editor"}}}
+local btns = {{"File",{{"New","New window","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},{"Time"}}},{"View",{"Theme Editor", "Highlighting: On", "Printer Mode: Off"}}}
 
 local function topbar()
     local w,h = term.getSize()
@@ -58,6 +59,11 @@ local function topbar()
     term.write(theline)
     term.setCursorPos(1,1)
     term.setTextColor(tCol.txt)
+    
+    -- Dynamically update View submenu strings
+    btns[3][2][2] = isHighlightEnabled and "Highlighting: On" or "Highlighting: Off"
+    btns[3][2][3] = isPrinterMode and "Printer Mode: On" or "Printer Mode: Off"
+    
     for t=1,#btns do
         btns[t].x = ({term.getCursorPos()})[1]
         btns[t].w = string.len(btns[t][1])+2
@@ -85,15 +91,17 @@ local function txt()
 	end
     while true do
         local w,h = term.getSize()
-        a[1].width = w-1
+        a[1].width = isPrinterMode and math.min(w-1, 25) or w-1
         a[1].height = h-4
+        
+        local textCol = tCol.txt
         a[1].sTable = {
             background = {tCol.bg},
-            text = {tCol.txt},
+            text = {textCol},
             cursor = {theme.cursor or colors.red},
-            keywords = {theme.keywords or colors.blue},
-            numbers = {theme.numbers or colors.orange},
-            notes = {theme.comments or colors.gray}
+            keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
+            numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
+            notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
         }
         term.setCursorPos(1,5)
         term.setBackgroundColor(colors.white)
@@ -322,20 +330,30 @@ function regevents()
                                                 printer.newPage()
                                                 printer.setPageTitle(title .. " - Page " .. page)
                                                 local y = 1
+                                                local totalPrintedLines = 0
                                                 for lineNum = 1, #a[1].lines do
-                                                    if y > 21 then
-                                                        printer.endPage()
-                                                        page = page + 1
-                                                        printer.newPage()
-                                                        printer.setPageTitle(title .. " - Page " .. page)
-                                                        y = 1
+                                                    local line = a[1].lines[lineNum]
+                                                    -- Word wrap lines for printing
+                                                    local wrapped = lUtils.wordwrap(line, 25)
+                                                    if #wrapped == 0 then
+                                                        wrapped = {""}
                                                     end
-                                                    printer.setCursorPos(1, y)
-                                                    printer.write(a[1].lines[lineNum])
-                                                    y = y + 1
+                                                    for _, wl in ipairs(wrapped) do
+                                                        if y > 21 then
+                                                            printer.endPage()
+                                                            page = page + 1
+                                                            printer.newPage()
+                                                            printer.setPageTitle(title .. " - Page " .. page)
+                                                            y = 1
+                                                        end
+                                                        printer.setCursorPos(1, y)
+                                                        printer.write(wl)
+                                                        y = y + 1
+                                                        totalPrintedLines = totalPrintedLines + 1
+                                                    end
                                                 end
                                                 printer.endPage()
-                                                lUtils.popup("Notepad++", "Successfully printed " .. #a[1].lines .. " line(s)!", 29, 9, {"OK"})
+                                                lUtils.popup("Notepad++", "Successfully printed " .. totalPrintedLines .. " line(s)!", 29, 9, {"OK"})
                                             end)
                                             if not ok then
                                                 lUtils.popup("Notepad++", "Printing failed: " .. tostring(err), 29, 10, {"OK"})
@@ -361,6 +379,12 @@ function regevents()
                                 coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
 							elseif b[3] == "Theme Editor" then
                                 lUtils.openWin("Theme Editor", "Program_Files/Notepad++/theme_editor.lua", 5, 5, 34, 15, true)
+                            elseif b[3] == "Highlighting: On" or b[3] == "Highlighting: Off" then
+                                isHighlightEnabled = not isHighlightEnabled
+                                coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                            elseif b[3] == "Printer Mode: On" or b[3] == "Printer Mode: Off" then
+                                isPrinterMode = not isPrinterMode
+                                coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
                             end
                         end
                     end
@@ -505,10 +529,6 @@ while true do
         draw()
     end
 end
-]===]
-files["Program_Files/Notepad++/icon.bimg"] = [===[{{{"€  "," ee","   ",},{"•Ž‘"," 4e","4e4",},{"Š  ","444","   ",},},}
-]===]
-files["Program_Files/Notepad++/taskbar.bimg"] = [===[{{{"€  "," ee","   ",},{"•Ž‘"," 4e","4e4",},{"Š  ","444","   ",},},}
 ]===]
 files["Program_Files/dorpchat/main.lua"] = [===[-- Program_Files/dorpchat/main.lua
 local tArgs = {...}
@@ -3274,10 +3294,6 @@ termsetBackgroundColor(initcolors.bg)
 termsetTextColor(initcolors.txt)
 termclearLine()
 ]===]
-files["Program_Files/dorpchat/icon.bimg"] = [===[{{{"Ÿ €","   ","00 ",},{"—ƒ™","0 0","77 ",},{"‚ƒ€","00 ","   ",},},}
-]===]
-files["Program_Files/dorpchat/taskbar.bimg"] = [===[{{{"Ÿ €","   ","00 ",},{"—ƒ™","0 0","77 ",},{"‚ƒ€","00 ","   ",},},}
-]===]
 files["Program_Files/SysInfo/main.lua"] = [===[-- Program_Files/SysInfo/main.lua
 shell.run("LevelOS/startup/lUtils")
 
@@ -3388,10 +3404,6 @@ while true do
     end
 end
 ]===]
-files["Program_Files/SysInfo/icon.bimg"] = [===[{{{"—€”","  4","4  ",},{"”€—","  8","88 ",},{"‰ƒ†","484","   ",},},}
-]===]
-files["Program_Files/SysInfo/taskbar.bimg"] = [===[{{{"—€”","  4","4  ",},{"”€—","  8","88 ",},{"‰ƒ†","484","   ",},},}
-]===]
 files["User/Images/desktop.nfp"] = [===[999999999999999999999999999999999999999999999999999999999999999999999999999999
 999999999999999999999999999999999999999999999999999999999999999999999999999999
 999999999999999999999999999999999999999999999999999999999999999999999999999999
@@ -3425,7 +3437,7 @@ dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 ]===]
 
--- Extract and write files
+-- Extract and write packaged text files
 for path, content in pairs(files) do
     local dir = fs.getDir(path)
     if dir ~= "" and not fs.exists(dir) then
@@ -3436,6 +3448,42 @@ for path, content in pairs(files) do
     f.write(content)
     f.close()
     print("  Extracted: " .. path)
+end
+
+-- Download binary assets and external programs from GitHub to preserve exact byte formats
+local github_base = "https://raw.githubusercontent.com/TheDerpyMit/dorpos/refs/heads/main/"
+
+local downloads = {
+    -- DorpChat Icons
+    { url = github_base .. "dorpchat_icon.bimg", dest = "Program_Files/dorpchat/icon.bimg" },
+    { url = github_base .. "dorpchat_icon.bimg", dest = "Program_Files/dorpchat/taskbar.bimg" },
+    -- Notepad++ Icons
+    { url = github_base .. "notepad_plus_icon.bimg", dest = "Program_Files/Notepad++/icon.bimg" },
+    { url = github_base .. "notepad_plus_icon.bimg", dest = "Program_Files/Notepad++/taskbar.bimg" },
+    -- SysInfo Icons
+    { url = github_base .. "sysinfo_icon.bimg", dest = "Program_Files/SysInfo/icon.bimg" },
+    { url = github_base .. "sysinfo_icon.bimg", dest = "Program_Files/SysInfo/taskbar.bimg" },
+    -- Music Streaming App
+    { url = github_base .. "music.lua", dest = "Program_Files/Music/main.lua" },
+    { url = github_base .. "music_icon.bimg", dest = "Program_Files/Music/icon.bimg" },
+    { url = github_base .. "music_icon.bimg", dest = "Program_Files/Music/taskbar.bimg" }
+}
+
+for _, dl in ipairs(downloads) do
+    local dir = fs.getDir(dl.dest)
+    if dir ~= "" and not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+    print("  Downloading: " .. dl.dest)
+    local res = http.get(dl.url, nil, true) -- binary download mode
+    if res then
+        local f = fs.open(dl.dest, "wb") -- write binary mode to preserve special CC characters
+        f.write(res.readAll())
+        f.close()
+        res.close()
+    else
+        print("  Error: Failed to download " .. dl.url)
+    end
 end
 
 -- Set desktop wallpaper
@@ -3494,6 +3542,13 @@ local f3 = fs.open(siLink, "w")
 f3.write('{ "Program_Files/SysInfo/main.lua" }')
 f3.close()
 print("  Created Shortcut: " .. siLink)
+
+-- Music Link
+local musicLink = fs.combine(desktopDir, "Music.llnk")
+local f4 = fs.open(musicLink, "w")
+f4.write('{ "Program_Files/Music/main.lua" }')
+f4.close()
+print("  Created Shortcut: " .. musicLink)
 
 print("\nInstallation complete!")
 print("Restart LevelOS or check your Desktop to see the new apps!")
