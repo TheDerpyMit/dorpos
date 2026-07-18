@@ -500,9 +500,9 @@ while true do
     end
 end
 ]===]
-files["Program_Files/Notepad++/icon.limg"] = [===[{{{"ŸŸ€","   ","dd ",},{"  •","555","dd ",},{"ˆŒ•","dd5","55 ",},},}
+files["Program_Files/Notepad++/icon.limg"] = [===[{{{"     ","fffff","T4T4T",},{"     ","fffff","e4e4e",},{"     ","fffff","eeeee",},{"     ","fffff","e444e",},{"     ","fffff","eeeee",},}}
 ]===]
-files["Program_Files/Notepad++/taskbar.limg"] = [===[{{{"•ƒ•","  d","dd ",},{"Š …","ddd","   ",},},}
+files["Program_Files/Notepad++/taskbar.limg"] = [===[{{{"     ","fffff","T4T4T",},{"     ","fffff","e4e4e",},{"     ","fffff","eeeee",},{"     ","fffff","e444e",},{"     ","fffff","eeeee",},}}
 ]===]
 files["Program_Files/dorpchat/main.lua"] = [===[-- Program_Files/dorpchat/main.lua
 local tArgs = {...}
@@ -3326,9 +3326,109 @@ termsetBackgroundColor(initcolors.bg)
 termsetTextColor(initcolors.txt)
 termclearLine()
 ]===]
-files["Program_Files/dorpchat/icon.limg"] = [===[{{{" ” "," 1 ","   "},{"•••","111","   "},{" „ "," 1 ","   "},},}
+files["Program_Files/dorpchat/icon.limg"] = [===[{{{"       ","fffffff","77777TT",},{"       ","fffffff","700007T",},{"       ","fffffff","70bb007",},{"       ","fffffff","700007T",},{"       ","fffffff","77777TT",},}}
 ]===]
-files["Program_Files/dorpchat/taskbar.limg"] = [===[{{{" ” "," 1 ","   "},{" „ "," 1 ","   "},},}
+files["Program_Files/dorpchat/taskbar.limg"] = [===[{{{"       ","fffffff","77777TT",},{"       ","fffffff","700007T",},{"       ","fffffff","70bb007",},{"       ","fffffff","700007T",},{"       ","fffffff","77777TT",},}}
+]===]
+files["Program_Files/SysInfo/main.lua"] = [===[-- Program_Files/SysInfo/main.lua
+shell.run("LevelOS/startup/lUtils")
+
+local w, h = term.getSize()
+
+-- Color palette matching SysInfo theme
+local bg = colors.gray
+local fg = colors.white
+local labelCol = colors.lightGray
+local activeCol = colors.lime
+local inactiveCol = colors.red
+
+local function drawInfo()
+    term.setBackgroundColor(bg)
+    term.setTextColor(fg)
+    term.clear()
+    
+    -- Title
+    term.setCursorPos(math.ceil(w/2 - 6), 2)
+    term.setTextColor(colors.white)
+    term.write("About Your PC")
+    
+    -- Horizontal separator line
+    term.setCursorPos(2, 3)
+    term.setTextColor(colors.lightGray)
+    term.write(string.rep("\140", w - 2))
+    
+    local specs = {
+        { label = "Computer ID:", val = tostring(os.getComputerID()) },
+        { label = "Label:", val = os.getComputerLabel() or "Unnamed" },
+        { label = "OS Version:", val = _HOST or "CraftOS" },
+        { label = "Lua Engine:", val = _VERSION .. (jit and " (JIT)" or "") },
+        { label = "Free Disk:", val = textutils.format(fs.getFreeSpace("/")) .. " bytes" },
+    }
+    
+    local y = 5
+    for _, spec in ipairs(specs) do
+        term.setCursorPos(3, y)
+        term.setTextColor(labelCol)
+        term.write(spec.label)
+        term.setCursorPos(18, y)
+        term.setTextColor(fg)
+        term.write(spec.val)
+        y = y + 1
+    end
+    
+    -- Separator
+    term.setCursorPos(2, y + 1)
+    term.setTextColor(colors.lightGray)
+    term.write(string.rep("\140", w - 2))
+    
+    term.setCursorPos(3, y + 3)
+    term.setTextColor(fg)
+    term.write("Peripherals Connection:")
+    
+    local peripherals = {
+        { name = "Speaker", type = "speaker" },
+        { name = "Printer", type = "printer" },
+        { name = "Modem", type = "modem" },
+        { name = "Disk Drive", type = "drive" },
+        { name = "Monitor", type = "monitor" },
+    }
+    
+    y = y + 5
+    for _, p in ipairs(peripherals) do
+        local connected = peripheral.find(p.type) ~= nil
+        term.setCursorPos(3, y)
+        term.setTextColor(labelCol)
+        term.write(p.name .. ":")
+        
+        term.setCursorPos(18, y)
+        if connected then
+            term.setTextColor(activeCol)
+            term.write("\7 Connected")
+        else
+            term.setTextColor(inactiveCol)
+            term.write("\7 Disconnected")
+        end
+        y = y + 1
+    end
+end
+
+drawInfo()
+
+while true do
+    local e = {os.pullEvent()}
+    if e[1] == "term_resize" then
+        w, h = term.getSize()
+        drawInfo()
+    elseif e[1] == "peripheral" or e[1] == "peripheral_detach" then
+        drawInfo()
+    elseif e[1] == "mouse_click" or e[1] == "key" then
+        drawInfo()
+    end
+end
+]===]
+files["Program_Files/SysInfo/icon.limg"] = [===[{{{"      ","ffffff","T4TT4T",},{"      ","ffffff","400004",},{"      ","ffffff","T0000T",},{"      ","ffffff","400004",},{"      ","ffffff","T4TT4T",},}}
+]===]
+files["Program_Files/SysInfo/taskbar.limg"] = [===[{{{"      ","ffffff","T4TT4T",},{"      ","ffffff","400004",},{"      ","ffffff","T0000T",},{"      ","ffffff","400004",},{"      ","ffffff","T4TT4T",},}}
 ]===]
 
 -- Extract and write files
@@ -3363,6 +3463,13 @@ local f2 = fs.open(dcLink, "w")
 f2.write('{ "Program_Files/dorpchat/main.lua" }')
 f2.close()
 print("  Created Shortcut: " .. dcLink)
+
+-- SysInfo Link
+local siLink = fs.combine(desktopDir, "SysInfo.llnk")
+local f3 = fs.open(siLink, "w")
+f3.write('{ "Program_Files/SysInfo/main.lua" }')
+f3.close()
+print("  Created Shortcut: " .. siLink)
 
 print("\nInstallation complete!")
 print("Restart LevelOS or check your Desktop to see the new apps!")
