@@ -123,105 +123,7 @@ local function pagesToLines(localPages)
     return linesList
 end
 
-local function wouldExceed(newChar)
-    if not a[1] or not a[1].lines then return false end
-    local lines = {}
-    for i, l in ipairs(a[1].lines) do
-        lines[i] = l
-    end
-    
-    local lineIdx = a[5] or 1
-    local cursorCol = a[4] or 1
-    local line = lines[lineIdx] or ""
-    lines[lineIdx] = string.sub(line, 1, cursorCol - 1) .. newChar .. string.sub(line, cursorCol)
-    
-    local idx = 1
-    while idx <= #lines do
-        local l = lines[idx]
-        if #l > 25 then
-            local spacePos = nil
-            for i = 25, 1, -1 do
-                if string.sub(l, i, i) == " " then
-                    spacePos = i
-                    break
-                end
-            end
-            local part1, part2
-            if spacePos then
-                part1 = string.sub(l, 1, spacePos)
-                part2 = string.sub(l, spacePos + 1)
-            else
-                part1 = string.sub(l, 1, 25)
-                part2 = string.sub(l, 26)
-            end
-            lines[idx] = part1
-            table.insert(lines, idx + 1, part2)
-        else
-            local nextL = lines[idx + 1]
-            if nextL and #l < 25 then
-                local firstWord = string.match(nextL, "^[^%s]+")
-                if firstWord and #l + #firstWord + 1 <= 25 then
-                    lines[idx] = l .. (l:sub(-1) == " " and "" or " ") .. firstWord
-                    lines[idx + 1] = string.sub(nextL, #firstWord + 1):gsub("^%s+", "")
-                    if lines[idx + 1] == "" and #lines > idx + 1 then
-                        table.remove(lines, idx + 1)
-                    end
-                    idx = idx - 1
-                end
-            end
-        end
-        idx = idx + 1
-    end
-    
-    return #lines > 21
-end
 
-local myProc = lOS.getRunningProcess()
-local opullEvent = os.pullEvent
-local hijacked = false
-
-function _G.os.pullEvent(filter)
-    local currentProc = lOS.getRunningProcess()
-    if currentProc == myProc then
-        if hijacked then
-            hijacked = false
-            return "mouse_click", 1, -999, -999
-        end
-        
-        local event, button, x, y = opullEvent(filter)
-        
-        if isPrinterMode and (event == "char" or event == "key" or event == "paste") then
-            local blockEvent = false
-            if event == "key" and button == keys.enter then
-                if a[1] and a[1].lines and #a[1].lines >= 21 then
-                    blockEvent = true
-                end
-            elseif event == "char" then
-                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed(button) then
-                    blockEvent = true
-                end
-            elseif event == "key" and button == keys.tab then
-                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed("  ") then
-                    blockEvent = true
-                end
-            elseif event == "paste" then
-                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed(button) then
-                    blockEvent = true
-                end
-            end
-            
-            if blockEvent then
-                return "dummy"
-            end
-            
-            hijacked = true
-        end
-        
-        return event, button, x, y
-    else
-        return opullEvent(filter)
-    end
-end
 
 local function drawPageControls()
     local w,h = term.getSize()
@@ -301,6 +203,36 @@ local function txt()
             a[1].width = 25
             a[1].height = 21
             
+            -- Backup lines and state before drawEditBox
+            local backupLines = {}
+            for i, l in ipairs(a[1].lines) do
+                backupLines[i] = l
+            end
+            local backupCursorCol = a[4] or 1
+            local backupCursorLine = a[5] or 1
+            local backupScrollX = a[2] or 0
+            local backupScrollY = a[3] or 0
+            
+            local textCol = tCol.txt
+            a[1].sTable = {
+                background = {tCol.bg},
+                text = {textCol},
+                cursor = {theme.cursor or colors.red},
+                keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
+                numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
+                notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
+            }
+            term.setCursorPos(1,5)
+            term.setBackgroundColor(colors.white)
+            term.setTextColor(colors.black)
+            local changesAllowed = true
+            if isReadOnly == true or (tFilepath ~= "" and fs.isReadOnly(tFilepath) == true) then
+                changesAllowed = false
+            end
+            
+            a = {lUtils.drawEditBox(a[1], startX, startY, a[2], a[3], a[4], a[5], true, true, nil, changesAllowed)}
+            
+            -- Word wrap the text on the active page
             local lines = a[1].lines
             local lineIdx = 1
             local cursorCol = a[4] or 1
@@ -382,26 +314,21 @@ local function txt()
                 lineIdx = lineIdx + 1
             end
             
-            a[5] = cursorLine
-            a[4] = cursorCol
-            
-            local textCol = tCol.txt
-            a[1].sTable = {
-                background = {tCol.bg},
-                text = {textCol},
-                cursor = {theme.cursor or colors.red},
-                keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
-                numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
-                notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
-            }
-            term.setCursorPos(1,5)
-            term.setBackgroundColor(colors.white)
-            term.setTextColor(colors.black)
-            local changesAllowed = true
-            if isReadOnly == true or (tFilepath ~= "" and fs.isReadOnly(tFilepath) == true) then
-                changesAllowed = false
+            -- If we exceeded 21 lines, revert to backup and play beep
+            if #lines > 21 then
+                a[1].lines = backupLines
+                a[4] = backupCursorCol
+                a[5] = backupCursorLine
+                a[2] = backupScrollX
+                a[3] = backupScrollY
+                local sp = peripheral.find("speaker")
+                if sp then
+                    pcall(sp.playNote, "bass", 1, 5)
+                end
+            else
+                a[5] = cursorLine
+                a[4] = cursorCol
             end
-            a = {lUtils.drawEditBox(a[1], startX, startY, a[2], a[3], a[4], a[5], true, true, nil, changesAllowed)}
         else
             a[1].width = w-1
             a[1].height = h-4
