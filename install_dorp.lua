@@ -38,29 +38,7 @@ end
 local isHighlightEnabled = true
 local isPrinterMode = false
 
-local myProc = lOS.getRunningProcess()
-local opullEvent = os.pullEvent
-local hijacked = false
 
-function _G.os.pullEvent(filter)
-    local currentProc = lOS.getRunningProcess()
-    if currentProc == myProc then
-        if hijacked then
-            hijacked = false
-            return "mouse_click", 1, -999, -999
-        end
-        
-        local event, button, x, y = opullEvent(filter)
-        
-        if isPrinterMode and (event == "char" or event == "key" or event == "paste") then
-            hijacked = true
-        end
-        
-        return event, button, x, y
-    else
-        return opullEvent(filter)
-    end
-end
 
 local theme = config.themes[config.current]
 local tCol = {
@@ -70,7 +48,7 @@ local tCol = {
     misc2 = theme.misc2
 }
 
-local btns = {{"File",{{"New","New window","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},"Center Align","Time"}},{"View",{"Theme Editor", "Highlighting: On", "Printer Mode: Off"}}}
+local btns = {{"File",{{"New","Open...","Save","Save as..."},"Print","Quit"}},{"Edit",{"Undo",{"Search","Replace"},"Center Align","Time"}},{"View",{"Theme Editor", "Highlighting: On", "Printer Mode: Off"}}}
 
 local function topbar()
     local w,h = term.getSize()
@@ -98,6 +76,188 @@ end
 local w,h = term.getSize()
 local a = {}
 
+local pages = { { "" } }
+local currentPage = 1
+
+local function splitToPrinterWidth(linesList)
+    local wrapped = {}
+    for _, line in ipairs(linesList) do
+        local wl = lUtils.wordwrap(line, 25)
+        if #wl == 0 then
+            table.insert(wrapped, "")
+        else
+            for _, wLine in ipairs(wl) do
+                table.insert(wrapped, wLine)
+            end
+        end
+    end
+    return wrapped
+end
+
+local function linesToPages(linesList)
+    local localPages = {}
+    local currPage = {}
+    for i, line in ipairs(linesList) do
+        table.insert(currPage, line)
+        if #currPage == 21 then
+            table.insert(localPages, currPage)
+            currPage = {}
+        end
+    end
+    if #currPage > 0 or #localPages == 0 then
+        table.insert(localPages, currPage)
+    end
+    return localPages
+end
+
+local function pagesToLines(localPages)
+    local linesList = {}
+    for _, page in ipairs(localPages) do
+        for _, line in ipairs(page) do
+            table.insert(linesList, line)
+        end
+    end
+    if #linesList == 0 then
+        linesList = {""}
+    end
+    return linesList
+end
+
+local function wouldExceed(newChar)
+    if not a[1] or not a[1].lines then return false end
+    local lines = {}
+    for i, l in ipairs(a[1].lines) do
+        lines[i] = l
+    end
+    
+    local lineIdx = a[5] or 1
+    local cursorCol = a[4] or 1
+    local line = lines[lineIdx] or ""
+    lines[lineIdx] = string.sub(line, 1, cursorCol - 1) .. newChar .. string.sub(line, cursorCol)
+    
+    local idx = 1
+    while idx <= #lines do
+        local l = lines[idx]
+        if #l > 25 then
+            local spacePos = nil
+            for i = 25, 1, -1 do
+                if string.sub(l, i, i) == " " then
+                    spacePos = i
+                    break
+                end
+            end
+            local part1, part2
+            if spacePos then
+                part1 = string.sub(l, 1, spacePos)
+                part2 = string.sub(l, spacePos + 1)
+            else
+                part1 = string.sub(l, 1, 25)
+                part2 = string.sub(l, 26)
+            end
+            lines[idx] = part1
+            table.insert(lines, idx + 1, part2)
+        else
+            local nextL = lines[idx + 1]
+            if nextL and #l < 25 then
+                local firstWord = string.match(nextL, "^[^%s]+")
+                if firstWord and #l + #firstWord + 1 <= 25 then
+                    lines[idx] = l .. (l:sub(-1) == " " and "" or " ") .. firstWord
+                    lines[idx + 1] = string.sub(nextL, #firstWord + 1):gsub("^%s+", "")
+                    if lines[idx + 1] == "" and #lines > idx + 1 then
+                        table.remove(lines, idx + 1)
+                    end
+                    idx = idx - 1
+                end
+            end
+        end
+        idx = idx + 1
+    end
+    
+    return #lines > 21
+end
+
+local myProc = lOS.getRunningProcess()
+local opullEvent = os.pullEvent
+local hijacked = false
+
+function _G.os.pullEvent(filter)
+    local currentProc = lOS.getRunningProcess()
+    if currentProc == myProc then
+        if hijacked then
+            hijacked = false
+            return "mouse_click", 1, -999, -999
+        end
+        
+        local event, button, x, y = opullEvent(filter)
+        
+        if isPrinterMode and (event == "char" or event == "key" or event == "paste") then
+            local blockEvent = false
+            if event == "key" and button == keys.enter then
+                if a[1] and a[1].lines and #a[1].lines >= 21 then
+                    blockEvent = true
+                end
+            elseif event == "char" then
+                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed(button) then
+                    blockEvent = true
+                end
+            elseif event == "key" and button == keys.tab then
+                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed("  ") then
+                    blockEvent = true
+                end
+            elseif event == "paste" then
+                if a[1] and a[1].lines and #a[1].lines >= 21 and wouldExceed(button) then
+                    blockEvent = true
+                end
+            end
+            
+            if blockEvent then
+                return "dummy"
+            end
+            
+            hijacked = true
+        end
+        
+        return event, button, x, y
+    else
+        return opullEvent(filter)
+    end
+end
+
+local function drawPageControls()
+    local w,h = term.getSize()
+    term.setCursorPos(1, h-2)
+    term.setBackgroundColor(tCol.misc)
+    term.setTextColor(tCol.txt)
+    term.clearLine()
+    
+    local text = string.format(" Page %d of %d ", currentPage, #pages)
+    
+    term.setCursorPos(2, h-2)
+    term.setBackgroundColor(currentPage > 1 and colors.lightGray or colors.gray)
+    term.setTextColor(currentPage > 1 and colors.black or colors.lightGray)
+    term.write("[<]")
+    
+    term.setCursorPos(6, h-2)
+    term.setBackgroundColor(currentPage < #pages and colors.lightGray or colors.gray)
+    term.setTextColor(currentPage < #pages and colors.black or colors.lightGray)
+    term.write("[>]")
+    
+    term.setCursorPos(11, h-2)
+    term.setBackgroundColor(tCol.misc)
+    term.setTextColor(tCol.txt)
+    term.write(text)
+    
+    term.setCursorPos(w - 23, h-2)
+    term.setBackgroundColor(colors.lightGray)
+    term.setTextColor(colors.black)
+    term.write("[+ Page]")
+    
+    term.setCursorPos(w - 13, h-2)
+    term.setBackgroundColor(colors.lightGray)
+    term.setTextColor(colors.black)
+    term.write("[- Page]")
+end
+
 local function txt()
     a = {{width=w-1,height=h-4,sTable={},filepath="",lines={""},changed=false},0,0,1,1}
 	if tFilepath ~= "" then
@@ -113,12 +273,34 @@ local function txt()
 			end
 		end
 	end
+    if isPrinterMode then
+        local flat = a[1].lines
+        local wrapped = splitToPrinterWidth(flat)
+        pages = linesToPages(wrapped)
+        currentPage = 1
+        a[1].lines = pages[1]
+    else
+        pages = { { "" } }
+        currentPage = 1
+    end
     while true do
         local w,h = term.getSize()
-        a[1].width = w-1
-        a[1].height = h-4
         
         if isPrinterMode then
+            local startX = math.floor((w - 25) / 2) + 1
+            local startY = math.floor((h - 4 - 21) / 2) + 3
+            if startY < 3 then startY = 3 end
+            
+            term.setBackgroundColor(tCol.bg)
+            term.clear()
+            
+            drawPageControls()
+            term.setTextColor(tCol.misc2)
+            lUtils.border(startX - 1, startY - 1, startX + 25, startY + 21, nil, 3)
+            
+            a[1].width = 25
+            a[1].height = 21
+            
             local lines = a[1].lines
             local lineIdx = 1
             local cursorCol = a[4] or 1
@@ -202,25 +384,46 @@ local function txt()
             
             a[5] = cursorLine
             a[4] = cursorCol
+            
+            local textCol = tCol.txt
+            a[1].sTable = {
+                background = {tCol.bg},
+                text = {textCol},
+                cursor = {theme.cursor or colors.red},
+                keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
+                numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
+                notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
+            }
+            term.setCursorPos(1,5)
+            term.setBackgroundColor(colors.white)
+            term.setTextColor(colors.black)
+            local changesAllowed = true
+            if isReadOnly == true or (tFilepath ~= "" and fs.isReadOnly(tFilepath) == true) then
+                changesAllowed = false
+            end
+            a = {lUtils.drawEditBox(a[1], startX, startY, a[2], a[3], a[4], a[5], true, true, nil, changesAllowed)}
+        else
+            a[1].width = w-1
+            a[1].height = h-4
+            
+            local textCol = tCol.txt
+            a[1].sTable = {
+                background = {tCol.bg},
+                text = {textCol},
+                cursor = {theme.cursor or colors.red},
+                keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
+                numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
+                notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
+            }
+            term.setCursorPos(1,5)
+            term.setBackgroundColor(colors.white)
+            term.setTextColor(colors.black)
+            local changesAllowed = true
+            if isReadOnly == true or (tFilepath ~= "" and fs.isReadOnly(tFilepath) == true) then
+                changesAllowed = false
+            end
+            a = {lUtils.drawEditBox(a[1], 1, 3, a[2], a[3], a[4], a[5], true, true, nil, changesAllowed)}
         end
-        
-        local textCol = tCol.txt
-        a[1].sTable = {
-            background = {tCol.bg},
-            text = {textCol},
-            cursor = {theme.cursor or colors.red},
-            keywords = {isHighlightEnabled and (theme.keywords or colors.blue) or textCol},
-            numbers = {isHighlightEnabled and (theme.numbers or colors.orange) or textCol},
-            notes = {isHighlightEnabled and (theme.comments or colors.gray) or textCol}
-        }
-        term.setCursorPos(1,5)
-        term.setBackgroundColor(colors.white)
-        term.setTextColor(colors.black)
-        local changesAllowed = true
-        if isReadOnly == true or (tFilepath ~= "" and fs.isReadOnly(tFilepath) == true) then
-            changesAllowed = false
-        end
-        a = {lUtils.drawEditBox(a[1],1,3,a[2],a[3],a[4],a[5],true,true,nil,changesAllowed)}
         os.sleep(0)
     end
 end
@@ -367,7 +570,75 @@ function regevents()
             drawStatus()
             coroutine.resume(txtcor,"mouse_click",1,1,1)
         elseif e[1] == "mouse_click" then
-            if e[4] == 1 then
+            local w,h = term.getSize()
+            if isPrinterMode and e[4] == h-2 then
+                local cx = e[3]
+                if cx >= 2 and cx <= 4 then
+                    if currentPage > 1 then
+                        pages[currentPage].cursorX = a[4]
+                        pages[currentPage].cursorY = a[5]
+                        pages[currentPage].scrollX = a[2]
+                        pages[currentPage].scrollY = a[3]
+                        
+                        currentPage = currentPage - 1
+                        a[1].lines = pages[currentPage]
+                        a[4] = pages[currentPage].cursorX or 1
+                        a[5] = pages[currentPage].cursorY or 1
+                        a[2] = pages[currentPage].scrollX or 0
+                        a[3] = pages[currentPage].scrollY or 0
+                        coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                    end
+                elseif cx >= 6 and cx <= 8 then
+                    if currentPage < #pages then
+                        pages[currentPage].cursorX = a[4]
+                        pages[currentPage].cursorY = a[5]
+                        pages[currentPage].scrollX = a[2]
+                        pages[currentPage].scrollY = a[3]
+                        
+                        currentPage = currentPage + 1
+                        a[1].lines = pages[currentPage]
+                        a[4] = pages[currentPage].cursorX or 1
+                        a[5] = pages[currentPage].cursorY or 1
+                        a[2] = pages[currentPage].scrollX or 0
+                        a[3] = pages[currentPage].scrollY or 0
+                        coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                    end
+                elseif cx >= w - 23 and cx <= w - 16 then
+                    pages[currentPage].cursorX = a[4]
+                    pages[currentPage].cursorY = a[5]
+                    pages[currentPage].scrollX = a[2]
+                    pages[currentPage].scrollY = a[3]
+                    
+                    table.insert(pages, currentPage + 1, { "" })
+                    currentPage = currentPage + 1
+                    a[1].lines = pages[currentPage]
+                    a[4] = 1
+                    a[5] = 1
+                    a[2] = 0
+                    a[3] = 0
+                    a[1].changed = true
+                    coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                elseif cx >= w - 13 and cx <= w - 6 then
+                    if #pages > 1 then
+                        local choice = {lUtils.popup("Notepad++", "Delete current page?", 29, 8, {"Delete", "Cancel"})}
+                        if choice[1] == true and choice[3] == "Delete" then
+                            table.remove(pages, currentPage)
+                            if currentPage > #pages then
+                                currentPage = #pages
+                            end
+                            a[1].lines = pages[currentPage]
+                            a[4] = pages[currentPage].cursorX or 1
+                            a[5] = pages[currentPage].cursorY or 1
+                            a[2] = pages[currentPage].scrollX or 0
+                            a[3] = pages[currentPage].scrollY or 0
+                            a[1].changed = true
+                            coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
+                        end
+                    else
+                        lUtils.popup("Notepad++", "Cannot delete the last page!", 29, 8, {"OK"})
+                    end
+                end
+            elseif e[4] == 1 then
                 topbar()
                 term.setCursorBlink(false)
                 local oldcursorpos = {term.getCursorPos()}
@@ -384,43 +655,47 @@ function regevents()
                         end
                         local b = {lUtils.clickmenu(btns[t].x,2,20,btns[t][2],true,disabled)}
                         if b[1] ~= false then
-                            if b[3] == "New" then
-                                local d = true
-                                if a[1] and a[1].changed == true then
-                                    d = uwansave()
-                                end
-                                if d == true then
-                                    tFilepath = ""
-                                    txtcor = coroutine.create(txt)
-                                    os.startTimer(0.1)
-                                end
-                            elseif b[3] == "New window" then
-                                lOS.execute(LevelOS.path)
-                            elseif b[3] == "Open..." then
-                                local u = true
-                                if a[1] and a[1].changed == true then
-                                    u = uwansave()
-                                end
-                                if u == true then
-                                    local d = {lUtils.explorer("/","SelFile false")}
-                                    if d[1] ~= nil then
-                                        if fs.exists(d[1]) == true then
-                                            a = {}
-                                            txtcor = coroutine.create(txt)
-                                            coroutine.resume(txtcor)
-                                            tFilepath = d[1]
-                                            local openfile = fs.open(tFilepath,"r")
-                                            a[1].lines = {}
-                                            for line in openfile.readLine do
-                                                a[1].lines[#a[1].lines+1] = line
-                                            end
-                                            openfile.close()
-                                            if a[1].lines[1] == nil then
-                                                a[1].lines[1] = ""
-                                            end
-                                        end
-                                    end
-                                end
+                             if b[3] == "New" then
+                                 local d = true
+                                 if a[1] and a[1].changed == true then
+                                     d = uwansave()
+                                 end
+                                 if d == true then
+                                     tFilepath = ""
+                                     pages = { { "" } }
+                                     currentPage = 1
+                                     a[1].lines = pages[1]
+                                     txtcor = coroutine.create(txt)
+                                     os.startTimer(0.1)
+                                 end
+                             elseif b[3] == "Open..." then
+                                 local u = true
+                                 if a[1] and a[1].changed == true then
+                                     u = uwansave()
+                                 end
+                                 if u == true then
+                                     local d = {lUtils.explorer("/","SelFile false")}
+                                     if d[1] ~= nil and fs.exists(d[1]) then
+                                         a = {{lines={""},changed=false}}
+                                         tFilepath = d[1]
+                                         local openfile = fs.open(tFilepath,"r")
+                                         local loadedLines = {}
+                                         for line in openfile.readLine do loadedLines[#loadedLines+1] = line end
+                                         openfile.close()
+                                         if isPrinterMode then
+                                             pages = linesToPages(splitToPrinterWidth(loadedLines))
+                                             currentPage = 1
+                                             a[1].lines = pages[1]
+                                         else
+                                             pages = { { "" } }
+                                             currentPage = 1
+                                             a[1].lines = loadedLines
+                                         end
+                                         if #a[1].lines == 0 then a[1].lines[1] = "" end
+                                         txtcor = coroutine.create(txt)
+                                         coroutine.resume(txtcor)
+                                     end
+                                 end
                             elseif b[3] == "Save" then
                                 if save() == true then
                                     a[1].changed = false
@@ -434,61 +709,41 @@ function regevents()
                                     a[1].changed = false
                                 end
                             elseif b[3] == "Print" then
-                                local printer = peripheral.find("printer")
-                                if not printer then
-                                    lUtils.popup("Notepad++", "No printer found! Connect a Printer next to the computer.", 29, 9, {"OK"})
-                                else
-                                    local ink = printer.getInkLevel() or 0
-                                    local paper = printer.getPaperLevel() or 0
-                                    if ink == 0 then
-                                        lUtils.popup("Notepad++", "The printer is out of ink/dye!", 29, 9, {"OK"})
-                                    elseif paper == 0 then
-                                        lUtils.popup("Notepad++", "The printer is out of paper!", 29, 9, {"OK"})
-                                    else
-                                        local choice = {lUtils.popup("Notepad++", "Do you want to print this document?", 29, 8, {"Print", "Cancel"})}
-                                        if choice[1] == true and choice[3] == "Print" then
-                                            local ok, err = pcall(function()
-                                                local title = tFilepath ~= "" and fs.getName(tFilepath) or "Untitled"
-                                                local page = 1
-                                                printer.newPage()
-                                                printer.setPageTitle(title .. " - Page " .. page)
-                                                local y = 1
-                                                local totalPrintedLines = 0
-                                                for lineNum = 1, #a[1].lines do
-                                                    local line = a[1].lines[lineNum]
-                                                    -- Word wrap lines for printing
-                                                    local wrapped = lUtils.wordwrap(line, 25)
-                                                    if #wrapped == 0 then
-                                                        wrapped = {""}
-                                                    end
-                                                    for _, wl in ipairs(wrapped) do
-                                                        if y > 21 then
-                                                            printer.endPage()
-                                                            page = page + 1
-                                                            printer.newPage()
-                                                            printer.setPageTitle(title .. " - Page " .. page)
-                                                            y = 1
-                                                        end
+                                 local printer = peripheral.find("printer")
+                                 if not printer then
+                                     lUtils.popup("Notepad++", "No printer found!", 29, 9, {"OK"})
+                                 else
+                                    local choice = {lUtils.popup("Notepad++", "Print document?", 29, 8, {"Print", "Cancel"})}
+                                    if choice[3] == "Print" then
+                                        local ok, err = pcall(function()
+                                            local title = tFilepath ~= "" and fs.getName(tFilepath) or "Untitled"
+                                            if isPrinterMode then
+                                                for pIdx, pageLines in ipairs(pages) do
+                                                    if pIdx > 1 then printer.endPage() end
+                                                    printer.newPage()
+                                                    printer.setPageTitle(title .. " - Page " .. pIdx)
+                                                    for y = 1, #pageLines do
                                                         printer.setCursorPos(1, y)
-                                                        printer.write(wl)
-                                                        y = y + 1
-                                                        totalPrintedLines = totalPrintedLines + 1
+                                                        printer.write(pageLines[y])
                                                     end
                                                 end
                                                 printer.endPage()
-                                                lUtils.popup("Notepad++", "Successfully printed " .. totalPrintedLines .. " line(s)!", 29, 9, {"OK"})
-                                            end)
-                                            if not ok then
-                                                lUtils.popup("Notepad++", "Printing failed: " .. tostring(err), 29, 10, {"OK"})
+                                            else
+                                                printer.newPage()
+                                                local y = 1
+                                                for _, line in ipairs(a[1].lines) do
+                                                    local wrapped = lUtils.wordwrap(line, 25)
+                                                    for _, wl in ipairs(#wrapped > 0 and wrapped or {""}) do
+                                                        if y > 21 then printer.endPage(); printer.newPage(); y = 1 end
+                                                        printer.setCursorPos(1, y); printer.write(wl); y = y + 1
+                                                    end
+                                                end
+                                                printer.endPage()
                                             end
-                                        end
+                                        end)
                                     end
-                                end
+                                 end
                             elseif b[3] == "Quit" then
-                                local u = true
-                                if a[1] and a[1].changed == true then
-                                    u = uwansave()
-                                end
                                 if u == true then
                                     return
                                 end
@@ -511,6 +766,25 @@ function regevents()
                                 coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
                             elseif b[3] == "Printer Mode: On" or b[3] == "Printer Mode: Off" then
                                 isPrinterMode = not isPrinterMode
+                                if isPrinterMode then
+                                    local flat = a[1].lines
+                                    local wrapped = splitToPrinterWidth(flat)
+                                    pages = linesToPages(wrapped)
+                                    currentPage = 1
+                                    a[1].lines = pages[1]
+                                    a[4] = 1
+                                    a[5] = 1
+                                    a[2] = 0
+                                    a[3] = 0
+                                else
+                                    a[1].lines = pagesToLines(pages)
+                                    pages = { { "" } }
+                                    currentPage = 1
+                                    a[4] = 1
+                                    a[5] = 1
+                                    a[2] = 0
+                                    a[3] = 0
+                                end
                                 coroutine.resume(txtcor, "mouse_click", 1, 1, 1)
                             end
                         end
@@ -3531,6 +3805,140 @@ while true do
     end
 end
 ]===]
+files["Program_Files/Updater/main.lua"] = [===[-- DorpOS Updater App
+local w, h = term.getSize()
+local theme = {}
+if fs.exists("AppData/NotepadPlusPlus/themes.lconf") then
+    local f = fs.open("AppData/NotepadPlusPlus/themes.lconf", "r")
+    local data = textutils.unserialize(f.readAll())
+    f.close()
+    if data and data.themes and data.themes[data.current] then
+        theme = data.themes[data.current]
+    end
+end
+
+local tCol = {
+    bg = theme.bg or colors.black,
+    txt = theme.txt or colors.white,
+    bar = colors.lime,
+    barBg = colors.gray,
+    border = theme.misc2 or colors.lightGray
+}
+
+local function drawUI(progress, status)
+    term.setBackgroundColor(tCol.bg)
+    term.clear()
+    
+    -- Draw outline borders
+    term.setTextColor(tCol.border)
+    lUtils.border(1, 1, w, h, nil, 3)
+    
+    -- Title
+    term.setCursorPos(2, 2)
+    term.setTextColor(colors.yellow)
+    term.write("DorpOS Updater")
+    
+    -- Status text
+    term.setCursorPos(2, 4)
+    term.setTextColor(tCol.txt)
+    term.write(string.sub(status or "Initializing...", 1, w - 3))
+    
+    -- Progress Bar
+    local barWidth = w - 4
+    local fillWidth = math.floor(barWidth * progress)
+    if fillWidth < 0 then fillWidth = 0 end
+    if fillWidth > barWidth then fillWidth = barWidth end
+    
+    term.setCursorPos(2, 6)
+    term.setBackgroundColor(tCol.barBg)
+    term.write(string.rep(" ", barWidth))
+    
+    term.setCursorPos(2, 6)
+    term.setBackgroundColor(tCol.bar)
+    term.write(string.rep(" ", fillWidth))
+    
+    term.setBackgroundColor(tCol.bg)
+    term.setTextColor(colors.lightGray)
+    term.setCursorPos(2, 8)
+    term.write(string.format("%d%% Complete", math.floor(progress * 100)))
+end
+
+-- Initial render
+drawUI(0.05, "Connecting to GitHub...")
+
+local installer_url = "https://raw.githubusercontent.com/TheDerpyMit/dorpos/refs/heads/main/install_dorp.lua"
+local res = http.get(installer_url)
+if not res then
+    lUtils.popup("Updater Error", "Failed to connect to GitHub! Check your Internet connection.", 29, 9, {"OK"})
+    return
+end
+local code = res.readAll()
+res.close()
+
+drawUI(0.15, "Compiling installer...")
+local installer_func, err = load(code, "installer", "t", _ENV)
+if not installer_func then
+    lUtils.popup("Updater Error", "Failed to compile updater payload!", 29, 9, {"OK"})
+    return
+end
+
+-- Estimate total steps
+local totalFiles = 0
+for _ in string.gmatch(code, "files%[\"[^\"]+\"%]") do
+    totalFiles = totalFiles + 1
+end
+local totalDownloads = 0
+for _ in string.gmatch(code, "dest%s*=%s*\"[^\"]+\"") do
+    totalDownloads = totalDownloads + 1
+end
+local totalOps = totalFiles + totalDownloads + 5
+if totalOps <= 5 then totalOps = 15 end
+local completedOps = 0
+
+local function updateProgress(status)
+    completedOps = completedOps + 1
+    local progress = math.min(0.99, completedOps / totalOps)
+    drawUI(progress, status)
+    os.sleep(0.05)
+end
+
+-- Hijack process environment
+local env = setmetatable({}, { __index = _G })
+env.print = function(...) end
+env.write = function(...) end
+
+local oHttpGet = http.get
+env.http = setmetatable({}, { __index = http })
+env.http.get = function(url, headers, binary)
+    local filename = fs.getName(url) or "asset"
+    updateProgress("Downloading: " .. filename)
+    return oHttpGet(url, headers, binary)
+end
+
+local oFsOpen = fs.open
+env.fs = setmetatable({}, { __index = fs })
+env.fs.open = function(path, mode)
+    if mode == "w" or mode == "wb" then
+        local filename = fs.getName(path) or "file"
+        updateProgress("Writing: " .. filename)
+    end
+    return oFsOpen(path, mode)
+end
+
+-- Run update payload
+local ok, run_err = pcall(function()
+    setfenv(installer_func, env)
+    installer_func()
+end)
+
+if ok then
+    drawUI(1.0, "Update successful!")
+    os.sleep(1)
+    lUtils.popup("Updater", "All DorpOS apps have been successfully updated!", 29, 8, {"OK"})
+else
+    lUtils.popup("Updater Error", "Update failed: " .. tostring(run_err), 29, 10, {"OK"})
+end
+]===]
 files["User/Images/desktop.nfp"] = [===[999999999999999999999999999999999999999999999999999999999999999999999999999999
 999999999999999999999999999999999999999999999999999999999999999999999999999999
 999999999999999999999999999999999999999999999999999999999999999999999999999999
@@ -3590,6 +3998,9 @@ local downloads = {
     -- SysInfo Icons
     { url = github_base .. "sysinfo_icon.bimg", dest = "Program_Files/SysInfo/icon.bimg" },
     { url = github_base .. "sysinfo_icon.bimg", dest = "Program_Files/SysInfo/taskbar.bimg" },
+    -- Updater Icons
+    { url = github_base .. "dorp_updater_icon.bimg", dest = "Program_Files/Updater/icon.bimg" },
+    { url = github_base .. "dorp_updater_icon.bimg", dest = "Program_Files/Updater/taskbar.bimg" },
     -- Music Streaming App
     { url = github_base .. "music.lua", dest = "Program_Files/Music/main.lua" },
     { url = github_base .. "music_icon.bimg", dest = "Program_Files/Music/icon.bimg" },
@@ -3676,6 +4087,13 @@ local f4 = fs.open(musicLink, "w")
 f4.write('{ "Program_Files/Music/main.lua" }')
 f4.close()
 print("  Created Shortcut: " .. musicLink)
+
+-- Updater Link
+local updaterLink = fs.combine(desktopDir, "Updater.llnk")
+local f5 = fs.open(updaterLink, "w")
+f5.write('{ "Program_Files/Updater/main.lua" }')
+f5.close()
+print("  Created Shortcut: " .. updaterLink)
 
 print("\nInstallation complete!")
 print("Restart LevelOS or check your Desktop to see the new apps!")
