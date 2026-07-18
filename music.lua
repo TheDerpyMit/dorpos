@@ -258,7 +258,14 @@ function uiLoop()
 					if string.len(input) > 0 then
 						last_search = input
 						last_search_url = api_base_url .. "?v=" .. version .. "&search=" .. textutils.urlEncode(input)
-						http.request(last_search_url)
+						http.request({url = last_search_url, binary = true})
+						if lOS and lOS.requestCache then
+							for url, req in pairs(lOS.requestCache) do
+								if url == last_search_url or url:match("^" .. last_search_url:gsub("%%", "%%%%") .. "#*0*$") then
+									req.binary = true
+								end
+							end
+						end
 						search_results = nil
 						search_error = false
 					else
