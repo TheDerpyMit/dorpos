@@ -689,7 +689,7 @@ function httpLoop()
 					is_loading = false
 					player_handle = handle
 					start = handle.read(4)
-					size = 16 * 1024 - 4
+					size = 2048
 					playing_status = 1
 					os.queueEvent("redraw_screen")
 					os.queueEvent("audio_update")
