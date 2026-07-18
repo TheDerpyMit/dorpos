@@ -550,6 +550,62 @@ function uiLoop()
 	end
 end
 
+local downloaded_chunks = {}
+local download_finished = false
+local download_handle = nil
+
+local function stopDownloader()
+	if download_handle then
+		pcall(download_handle.close)
+		download_handle = nil
+	end
+end
+
+local function downloaderLoop()
+	while true do
+		os.pullEvent("start_download")
+		downloaded_chunks = {}
+		download_finished = false
+		
+		if download_handle then
+			local ok, err = pcall(function()
+				local start_bytes = download_handle.read(4)
+				local first_chunk = download_handle.read(2048)
+				if start_bytes and first_chunk then
+					first_chunk = start_bytes .. first_chunk
+				end
+				if first_chunk then
+					table.insert(downloaded_chunks, first_chunk)
+				end
+				os.queueEvent("chunk_downloaded")
+				
+				while true do
+					local chunk = download_handle.read(2052)
+					if not chunk then
+						download_finished = true
+						os.queueEvent("chunk_downloaded")
+						break
+					end
+					table.insert(downloaded_chunks, chunk)
+					os.queueEvent("chunk_downloaded")
+					os.sleep(0)
+				end
+			end)
+			if not ok then
+				local f = fs.open("music_error.txt", "w")
+				f.write(tostring(err))
+				f.close()
+				download_finished = true
+				os.queueEvent("chunk_downloaded")
+			end
+			if download_handle then
+				pcall(download_handle.close)
+				download_handle = nil
+			end
+		end
+	end
+end
+
 function audioLoop()
 	while true do
 
@@ -557,6 +613,7 @@ function audioLoop()
 		if playing and now_playing then
 			local thisnowplayingid = now_playing.id
 			if playing_id ~= thisnowplayingid then
+				stopDownloader()
 				playing_id = thisnowplayingid
 				last_download_url = api_base_url .. "?v=" .. version .. "&id=" .. textutils.urlEncode(playing_id)
 				playing_status = 0
@@ -576,41 +633,40 @@ function audioLoop()
 				os.queueEvent("audio_update")
 			elseif playing_status == 1 and needs_next_chunk == 1 then
 
+				local chunkIndex = 1
 				while true do
-					local chunk = player_handle.read(size)
+					local chunk = downloaded_chunks[chunkIndex]
 					if not chunk then
-						if looping == 2 or (looping == 1 and #queue == 0) then
-							playing_id = nil
-						elseif looping == 1 and #queue > 0 then
-							table.insert(queue, now_playing)
-							now_playing = queue[1]
-							table.remove(queue, 1)
-							playing_id = nil
-						else
-							if #queue > 0 then
+						if download_finished then
+							if looping == 2 or (looping == 1 and #queue == 0) then
+								playing_id = nil
+							elseif looping == 1 and #queue > 0 then
+								table.insert(queue, now_playing)
 								now_playing = queue[1]
 								table.remove(queue, 1)
 								playing_id = nil
 							else
-								now_playing = nil
-								playing = false
-								playing_id = nil
-								is_loading = false
-								is_error = false
+								if #queue > 0 then
+									now_playing = queue[1]
+									table.remove(queue, 1)
+									playing_id = nil
+								else
+									now_playing = nil
+									playing = false
+									playing_id = nil
+									is_loading = false
+									is_error = false
+								end
 							end
+
+							os.queueEvent("redraw_screen")
+							needs_next_chunk = 0
+							break
+						else
+							os.pullEvent("chunk_downloaded")
 						end
-
-						os.queueEvent("redraw_screen")
-
-						player_handle.close()
-						needs_next_chunk = 0
-						break
 					else
-						if start then
-							chunk, start = start .. chunk, nil
-							size = size + 4
-						end
-				
+						chunkIndex = chunkIndex + 1
 						buffer = decoder(chunk)
 						
 						local fn = {}
@@ -687,10 +743,10 @@ function httpLoop()
 				end
 				if url == last_download_url then
 					is_loading = false
-					player_handle = handle
-					start = handle.read(4)
-					size = 2048
+					stopDownloader()
+					download_handle = handle
 					playing_status = 1
+					os.queueEvent("start_download")
 					os.queueEvent("redraw_screen")
 					os.queueEvent("audio_update")
 				end
@@ -710,9 +766,13 @@ function httpLoop()
 					os.queueEvent("redraw_screen")
 					os.queueEvent("audio_update")
 				end
+			end,
+			function()
+				os.pullEvent("playback_stopped")
+				stopDownloader()
 			end
 		)
 	end
 end
 
-parallel.waitForAny(uiLoop, audioLoop, httpLoop)
+parallel.waitForAny(uiLoop, audioLoop, httpLoop, downloaderLoop)
