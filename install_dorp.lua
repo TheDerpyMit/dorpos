@@ -459,6 +459,12 @@ local function draw()
     term.setTextColor(colors.black)
     term.setCursorPos(8, 14)
     term.write("[ Save & Apply ]")
+    
+    -- Draw outer window border
+    local w, h = term.getSize()
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.lightGray)
+    lUtils.border(1, 1, w, h, nil, 3)
 end
 
 draw()
@@ -500,16 +506,17 @@ while true do
     end
 end
 ]===]
-files["Program_Files/Notepad++/icon.limg"] = [===[{{{"     ","fffff","T4T4T",},{"     ","fffff","e4e4e",},{"     ","fffff","eeeee",},{"     ","fffff","e444e",},{"     ","fffff","eeeee",},}}
+files["Program_Files/Notepad++/icon.bimg"] = [===[{{{"€  "," ee","   ",},{"•Ž‘"," 4e","4e4",},{"Š  ","444","   ",},},}
 ]===]
-files["Program_Files/Notepad++/taskbar.limg"] = [===[{{{"     ","fffff","T4T4T",},{"     ","fffff","e4e4e",},{"     ","fffff","eeeee",},{"     ","fffff","e444e",},{"     ","fffff","eeeee",},}}
+files["Program_Files/Notepad++/taskbar.bimg"] = [===[{{{"€  "," ee","   ",},{"•Ž‘"," 4e","4e4",},{"Š  ","444","   ",},},}
 ]===]
 files["Program_Files/dorpchat/main.lua"] = [===[-- Program_Files/dorpchat/main.lua
 local tArgs = {...}
 
 -- Check if we already have name and key (passed from command line)
-if tArgs[1] and tArgs[2] then
-    shell.run("Program_Files/dorpchat/dorpchat_core.lua", tArgs[1], tArgs[2])
+if tArgs[1] then
+    local key = tArgs[2] or "dorpchat_smp_secure_key_999"
+    shell.run("Program_Files/dorpchat/dorpchat_core.lua", tArgs[1], key)
     return
 end
 
@@ -517,7 +524,7 @@ shell.run("LevelOS/startup/lUtils")
 
 local w, h = term.getSize()
 
-local function drawGUI(nameVal, keyVal, selectedField)
+local function drawGUI(nameVal)
     term.setBackgroundColor(colors.gray)
     term.setTextColor(colors.white)
     term.clear()
@@ -527,124 +534,65 @@ local function drawGUI(nameVal, keyVal, selectedField)
     term.write("DorpChat")
     
     -- Name Field
-    term.setCursorPos(3, 4)
-    term.write("Username:")
     term.setCursorPos(3, 5)
-    if selectedField == 1 then
-        term.setBackgroundColor(colors.blue)
-    else
-        term.setBackgroundColor(colors.lightGray)
-    end
-    term.setTextColor(colors.black)
+    term.write("Enter your username:")
+    term.setCursorPos(3, 6)
+    term.setBackgroundColor(colors.blue)
+    term.setTextColor(colors.white)
     term.write(nameVal .. string.rep(" ", w - 6 - #nameVal))
     
-    -- Key Field
-    term.setBackgroundColor(colors.gray)
-    term.setTextColor(colors.white)
-    term.setCursorPos(3, 7)
-    term.write("Encryption Key:")
-    term.setCursorPos(3, 8)
-    if selectedField == 2 then
-        term.setBackgroundColor(colors.blue)
-    else
-        term.setBackgroundColor(colors.lightGray)
-    end
-    term.setTextColor(colors.black)
-    term.write(string.rep("*", #keyVal) .. string.rep(" ", w - 6 - #keyVal))
-    
     -- Connect Button
-    term.setBackgroundColor(colors.green)
-    term.setTextColor(colors.white)
-    term.setCursorPos(math.ceil(w/2 - 5), 11)
-    term.write("[ Connect ]")
-    
-    -- Connect to DorpChat Button
     term.setBackgroundColor(colors.orange)
     term.setTextColor(colors.white)
-    term.setCursorPos(math.ceil(w/2 - 11), 13)
+    term.setCursorPos(math.ceil(w/2 - 11), 10)
     term.write("[ Connect to DorpChat ]")
+    
+    -- Draw outer window border
+    term.setBackgroundColor(colors.gray)
+    term.setTextColor(colors.lightGray)
+    lUtils.border(1, 1, w, h, nil, 3)
 end
 
 local nameVal = ""
-local keyVal = ""
-local selectedField = 1
 
-drawGUI(nameVal, keyVal, selectedField)
+drawGUI(nameVal)
 
 while true do
     local e = {os.pullEvent()}
     if e[1] == "mouse_click" and e[2] == 1 then
         local cx, cy = e[3], e[4]
-        -- Click on Name field
-        if cy == 5 and cx >= 3 and cx <= w - 4 then
-            selectedField = 1
-            drawGUI(nameVal, keyVal, selectedField)
-        -- Click on Key field
-        elseif cy == 8 and cx >= 3 and cx <= w - 4 then
-            selectedField = 2
-            drawGUI(nameVal, keyVal, selectedField)
         -- Click on Connect button
-        elseif cy == 11 and cx >= math.ceil(w/2 - 5) and cx <= math.ceil(w/2 + 5) then
-            if #nameVal >= 2 and #keyVal >= 1 then
-                -- Start Dorpchat
-                shell.run("Program_Files/dorpchat/dorpchat_core.lua", nameVal, keyVal)
-                break
-            else
-                lUtils.popup("DorpChat", "Username & Key are required!", 27, 9, {"OK"})
-                drawGUI(nameVal, keyVal, selectedField)
-            end
-        -- Click on Connect to DorpChat button
-        elseif cy == 13 and cx >= math.ceil(w/2 - 11) and cx <= math.ceil(w/2 + 11) then
+        if cy == 10 and cx >= math.ceil(w/2 - 11) and cx <= math.ceil(w/2 + 11) then
             if #nameVal >= 2 then
-                -- Private SMP hardcoded key
+                -- Start Dorpchat with the secure private key
                 shell.run("Program_Files/dorpchat/dorpchat_core.lua", nameVal, "dorpchat_smp_secure_key_999")
                 break
             else
                 lUtils.popup("DorpChat", "Username is required!", 27, 9, {"OK"})
-                drawGUI(nameVal, keyVal, selectedField)
+                drawGUI(nameVal)
             end
         end
     elseif e[1] == "char" then
-        if selectedField == 1 then
-            if #nameVal < 20 then
-                nameVal = nameVal .. e[2]
-            end
-        elseif selectedField == 2 then
-            if #keyVal < 20 then
-                keyVal = keyVal .. e[2]
-            end
+        if #nameVal < 20 then
+            nameVal = nameVal .. e[2]
         end
-        drawGUI(nameVal, keyVal, selectedField)
+        drawGUI(nameVal)
     elseif e[1] == "key" then
         if e[2] == keys.backspace then
-            if selectedField == 1 then
-                nameVal = nameVal:sub(1, #nameVal - 1)
-            elseif selectedField == 2 then
-                keyVal = keyVal:sub(1, #keyVal - 1)
-            end
-            drawGUI(nameVal, keyVal, selectedField)
-        elseif e[2] == keys.tab then
-            if selectedField == 1 then
-                selectedField = 2
-            else
-                selectedField = 1
-            end
-            drawGUI(nameVal, keyVal, selectedField)
+            nameVal = nameVal:sub(1, #nameVal - 1)
+            drawGUI(nameVal)
         elseif e[2] == keys.enter then
-            if selectedField == 1 then
-                selectedField = 2
-                drawGUI(nameVal, keyVal, selectedField)
+            if #nameVal >= 2 then
+                shell.run("Program_Files/dorpchat/dorpchat_core.lua", nameVal, "dorpchat_smp_secure_key_999")
+                break
             else
-                -- trigger connect
-                if #nameVal >= 2 and #keyVal >= 1 then
-                    shell.run("Program_Files/dorpchat/dorpchat_core.lua", nameVal, keyVal)
-                    break
-                end
+                lUtils.popup("DorpChat", "Username is required!", 27, 9, {"OK"})
+                drawGUI(nameVal)
             end
         end
     elseif e[1] == "term_resize" then
         w, h = term.getSize()
-        drawGUI(nameVal, keyVal, selectedField)
+        drawGUI(nameVal)
     end
 end
 ]===]
@@ -3326,9 +3274,9 @@ termsetBackgroundColor(initcolors.bg)
 termsetTextColor(initcolors.txt)
 termclearLine()
 ]===]
-files["Program_Files/dorpchat/icon.limg"] = [===[{{{"       ","fffffff","77777TT",},{"       ","fffffff","700007T",},{"       ","fffffff","70bb007",},{"       ","fffffff","700007T",},{"       ","fffffff","77777TT",},}}
+files["Program_Files/dorpchat/icon.bimg"] = [===[{{{"Ÿ €","   ","00 ",},{"—ƒ™","0 0","77 ",},{"‚ƒ€","00 ","   ",},},}
 ]===]
-files["Program_Files/dorpchat/taskbar.limg"] = [===[{{{"       ","fffffff","77777TT",},{"       ","fffffff","700007T",},{"       ","fffffff","70bb007",},{"       ","fffffff","700007T",},{"       ","fffffff","77777TT",},}}
+files["Program_Files/dorpchat/taskbar.bimg"] = [===[{{{"Ÿ €","   ","00 ",},{"—ƒ™","0 0","77 ",},{"‚ƒ€","00 ","   ",},},}
 ]===]
 files["Program_Files/SysInfo/main.lua"] = [===[-- Program_Files/SysInfo/main.lua
 shell.run("LevelOS/startup/lUtils")
@@ -3341,6 +3289,16 @@ local fg = colors.white
 local labelCol = colors.lightGray
 local activeCol = colors.lime
 local inactiveCol = colors.red
+
+local function formatBytes(bytes)
+    if bytes >= 1024 * 1024 then
+        return string.format("%.2f MB", bytes / (1024 * 1024))
+    elseif bytes >= 1024 then
+        return string.format("%.2f KB", bytes / 1024)
+    else
+        return bytes .. " B"
+    end
+end
 
 local function drawInfo()
     term.setBackgroundColor(bg)
@@ -3362,7 +3320,7 @@ local function drawInfo()
         { label = "Label:", val = os.getComputerLabel() or "Unnamed" },
         { label = "OS Version:", val = _HOST or "CraftOS" },
         { label = "Lua Engine:", val = _VERSION .. (jit and " (JIT)" or "") },
-        { label = "Free Disk:", val = textutils.format(fs.getFreeSpace("/")) .. " bytes" },
+        { label = "Free Disk:", val = formatBytes(fs.getFreeSpace("/")) },
     }
     
     local y = 5
@@ -3410,6 +3368,10 @@ local function drawInfo()
         end
         y = y + 1
     end
+
+    -- Draw outer window border
+    term.setTextColor(colors.lightGray)
+    lUtils.border(1, 1, w, h, nil, 3)
 end
 
 drawInfo()
@@ -3426,9 +3388,41 @@ while true do
     end
 end
 ]===]
-files["Program_Files/SysInfo/icon.limg"] = [===[{{{"      ","ffffff","T4TT4T",},{"      ","ffffff","400004",},{"      ","ffffff","T0000T",},{"      ","ffffff","400004",},{"      ","ffffff","T4TT4T",},}}
+files["Program_Files/SysInfo/icon.bimg"] = [===[{{{"—€”","  4","4  ",},{"”€—","  8","88 ",},{"‰ƒ†","484","   ",},},}
 ]===]
-files["Program_Files/SysInfo/taskbar.limg"] = [===[{{{"      ","ffffff","T4TT4T",},{"      ","ffffff","400004",},{"      ","ffffff","T0000T",},{"      ","ffffff","400004",},{"      ","ffffff","T4TT4T",},}}
+files["Program_Files/SysInfo/taskbar.bimg"] = [===[{{{"—€”","  4","4  ",},{"”€—","  8","88 ",},{"‰ƒ†","484","   ",},},}
+]===]
+files["User/Images/desktop.nfp"] = [===[999999999999999999999999999999999999999999999999999999999999999999999999999999
+999999999999999999999999999999999999999999999999999999999999999999999999999999
+999999999999999999999999999999999999999999999999999999999999999999999999999999
+999999999999999999999999999999999999444444444499999999999999999999999999999999
+999999999999999999999999999999999999411111111499999999999999999999999999999999
+99999999999999999999999999999999999941111111149999999999999555d999999999999999
+9999999999999999999999999999999999994111111114999999999555555555ddd99999999999
+999999999999999999999999999999999999411111111499999999555555555555d99999999999
+9999999999999999999999999999999999994444444444999999995555555555555d9999999999
+9999999999999999999999999999999999999999999999999999995555555555555d9999999999
+999999999999999999999999999999999999999999999999999995555555555555559999999999
+999999999999999999999999999999999999999999999999999995555555555555559999999999
+999999999999999999999999999999999999999999999999999995595595555555959999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999999999999999999999999ccc799999999999999
+999999999999999999999999999999999999999995555555555555559999ccc799999999999999
+999999999999999999999999999999999999555555ddddddddddddd55555555599999999999999
+95555555555555999999999999999999995555dddddddddddddddddddddddddd55999999999955
+55ddddddddddd555559999999995555555555ddddddddddddddddddddddddddddd55555995555d
+ddddddddddddddddd55555555555dddddddddddddddddddddddddddddddddddddddddd5555dddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 ]===]
 
 -- Extract and write files
@@ -3443,6 +3437,36 @@ for path, content in pairs(files) do
     f.close()
     print("  Extracted: " .. path)
 end
+
+-- Set desktop wallpaper
+local lconfPath = "LevelOS/data/desktop.lconf"
+local dConfig = {
+    _VERSION = 1,
+    files = {},
+    sizes = {},
+    shortcutIcon = true,
+    background = { path = "User/Images/desktop.nfp", resize = "stretch" }
+}
+
+if fs.exists(lconfPath) then
+    local f = fs.open(lconfPath, "r")
+    local val = textutils.unserialize(f.readAll())
+    f.close()
+    if val then
+        dConfig = val
+        dConfig.background = { path = "User/Images/desktop.nfp", resize = "stretch" }
+    end
+else
+    local dir = fs.getDir(lconfPath)
+    if not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+end
+
+local f = fs.open(lconfPath, "w")
+f.write(textutils.serialize(dConfig))
+f.close()
+print("  Set LevelOS Desktop Wallpaper to: User/Images/desktop.nfp")
 
 -- Create desktop shortcuts
 local desktopDir = "User/Desktop"
